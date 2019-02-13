@@ -32,7 +32,6 @@ module RLW = struct
   [@@inline]
 
   let set_run_bit rlw bit =
-    Fmt.pr "set_run_bit %x with %b.\n%!" (get rlw) bit ;
     let word = get rlw in
     let word = if bit then word land (lnot 1) else word lor 1 in
     set rlw word
@@ -46,7 +45,6 @@ module RLW = struct
   [@@inline]
 
   let set_running_len rlw len =
-    Fmt.pr "set_running_len %x with %x.\n%!" (get rlw) len ;
     let word = get rlw in
     let word = word lor _rlw_largest_running_count_shift in
     let word = word land ((len lsl 1) lor (lnot _rlw_largest_running_count_shift)) in
@@ -169,8 +167,6 @@ let add_empty_words t v n =
 
 let add_literal t literal =
   let current_num = RLW.get_literal_words t.rlw in
-
-  Fmt.pr "add_literal %x, current_num: %x.\n%!" literal current_num ;
 
   if current_num >= RLW._rlw_largest_literal_count
   then begin
