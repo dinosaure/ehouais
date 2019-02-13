@@ -1,0 +1,3 @@
+(executable
+ (name bench)
+ (libraries digestif.c core_bench fmt ewah))

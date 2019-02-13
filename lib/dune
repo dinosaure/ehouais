@@ -1,0 +1,4 @@
+(library
+ (name ewah)
+ (c_names ewah)
+ (libraries fmt bigarray))
