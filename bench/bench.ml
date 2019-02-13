@@ -48,13 +48,21 @@ let add_in_hashset tbl =
          | false -> incr pos)
       tbl
 
-let test_add_in_ewah =
-  Test.create ~name:"ewah.add" (add_in_ewah tbl)
+let add_once_in_ewah =
+  let ewah = Ewah.make ~allocator:Ewah.allocator in
+  fun () -> ignore @@ Ewah.add ewah 1
 
-let test_add_in_hashset =
-  Test.create ~name:"set.add" (add_in_hashset tbl)
+let add_once_in_hashset =
+  let set = Set.create 32 in
+  fun () -> Set.add set 1
+
+let test_add_once_in_ewah = Test.create ~name:"ewah.add_once" add_once_in_ewah
+let test_add_once_in_hashset = Test.create ~name:"set.add" add_once_in_hashset
+let test_add_in_ewah = Test.create ~name:"ewah.add" (add_in_ewah tbl)
+let test_add_in_hashset = Test.create ~name:"set.add" (add_in_hashset tbl)
 
 let command =
-  Bench.make_command [ test_add_in_ewah; test_add_in_hashset ]
+  Bench.make_command [ test_add_in_ewah; test_add_in_hashset
+                     ; test_add_once_in_ewah; test_add_once_in_hashset ]
 
 let () = Command.run command
