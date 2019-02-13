@@ -130,8 +130,6 @@ let clear t =
 let add_empty_words t v n =
   let added = ref 0 in
 
-  Fmt.epr "add_empty_words, v:%x, n:%x.\n%!" v n ;
-
   if RLW.get_run_bit t.rlw != v
   && RLW.size t.rlw == 0
   then RLW.set_run_bit t.rlw (unsafe_bool_of_int v)
@@ -491,7 +489,6 @@ exception Invalid_bit
 
 let set t i =
   let dist = ((i + 1) // _bits_in_word) - (t.bit_size // _bits_in_word) in
-  Fmt.epr "set <ewah> %d, dist: %d.\n%!" i dist ;
 
   if i < t.bit_size then raise Invalid_bit ;
 
