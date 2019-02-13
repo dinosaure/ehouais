@@ -163,7 +163,7 @@ let add_empty_words t v n =
     RLW.set_running_len t.rlw !number ;
   end ;
 
-  !added
+  (* !added *) ()
 
 let add_literal t literal =
   let current_num = RLW.get_literal_words t.rlw in
@@ -172,11 +172,11 @@ let add_literal t literal =
   then begin
     buffer_push_rlw t 0 ;
     RLW.set_literal_words t.rlw 1 ;
-    buffer_push t literal ; 2
+    buffer_push t literal
   end else begin
     RLW.set_literal_words t.rlw (current_num + 1) ;
     assert (RLW.get_literal_words t.rlw == current_num + 1) ;
-    buffer_push t literal ; 1
+    buffer_push t literal
   end
 
 exception Break
@@ -230,7 +230,7 @@ let add_empty_word t v =
      && run_len < RLW._rlw_largest_running_count
   then begin
     RLW.set_running_len t.rlw (run_len + 1) ;
-    assert (RLW.get_running_len t.rlw == run_len + 1) ; 0
+    assert (RLW.get_running_len t.rlw == run_len + 1)
   end else begin
     buffer_push_rlw t 0 ;
 
@@ -243,7 +243,7 @@ let add_empty_word t v =
 
     RLW.set_running_len t.rlw 1 ;
     assert (RLW.get_running_len t.rlw == 1) ;
-    assert (RLW.get_literal_words t.rlw == 0) ; 1
+    assert (RLW.get_literal_words t.rlw == 0)
   end
 
 let add t word =
@@ -460,7 +460,7 @@ module Iterator = struct
       let pl = ref !t.rlw.running_len in
       if !index + !pl > max then pl := max - !index ;
 
-      ignore @@ add_empty_words ewah (!t.rlw.running_bit lxor negate) !pl ;
+      add_empty_words ewah (!t.rlw.running_bit lxor negate) !pl ;
       index := !index + !pl ;
 
       let pd = ref !t.rlw.literal_words in
@@ -476,7 +476,7 @@ module Iterator = struct
 
     while word_size !t > 0
     do
-      ignore @@ add_empty_words ewah 0 (word_size !t) ;
+      add_empty_words ewah 0 (word_size !t) ;
       t := discard_first_words !t (word_size !t) ;
     done ; !t
 end
@@ -492,12 +492,12 @@ let set t i =
 
   if dist > 0
   then begin
-    if dist > 1 then ignore @@ add_empty_words t 0 (dist - 1) ;
-    ignore @@ add_literal t (1 lsl (i % _bits_in_word))
+    if dist > 1 then add_empty_words t 0 (dist - 1) ;
+    add_literal t (1 lsl (i % _bits_in_word))
   end else if RLW.get_literal_words t.rlw == 0
   then begin
     RLW.set_running_len t.rlw (RLW.get_running_len t.rlw - 1) ;
-    ignore @@ add_literal t (1 lsl (i % _bits_in_word))
+    add_literal t (1 lsl (i % _bits_in_word))
   end else begin
     set t.buffer (t.buffer_size - 1) (get t.buffer (t.buffer_size - 1) lor (1 lsl (i mod _bits_in_word))) ;
     (* check if we just completed a stream of 1s *)
@@ -507,12 +507,12 @@ let set t i =
       t.buffer_size <- t.buffer_size - 1 ;
       set t.buffer t.buffer_size 0 ;
       RLW.set_literal_words t.rlw (RLW.get_literal_words t.rlw - 1) ;
-      ignore @@ add_empty_word t 1 ;
+      add_empty_word t 1
     end
   end
 
 let add_empty_words t v n =
-  if n == 0 then 0
+  if n == 0 then ()
   else
     ( t.bit_size <- t.bit_size + (n * _bits_in_word) ; add_empty_words t v n )
 
@@ -530,7 +530,7 @@ let compute_xor a b o =
         then i, j else j, i in
       let negate_words = lnot (lnot !predator.Iterator.rlw.running_bit) in
       let index, prey' = Iterator.discharge !prey o !predator.Iterator.rlw.running_len negate_words in
-      ignore @@ add_empty_words o negate_words (!predator.Iterator.rlw.running_len - index) ;
+      add_empty_words o negate_words (!predator.Iterator.rlw.running_len - index) ;
       predator := Iterator.discard_first_words !predator !predator.Iterator.rlw.running_len ;
       prey := prey' ;
     done ;
@@ -540,7 +540,7 @@ let compute_xor a b o =
     if literals > 0
     then begin
       for k = 0 to literals - 1 do
-        ignore @@ add o (PBuf.get !i.Iterator.buffer (!i.literal_word_start + k) lxor PBuf.get !j.Iterator.buffer (!j.literal_word_start + k)) ;
+        add o (PBuf.get !i.Iterator.buffer (!i.literal_word_start + k) lxor PBuf.get !j.Iterator.buffer (!j.literal_word_start + k)) ;
       done ;
 
       i := Iterator.discard_first_words !i literals ;
@@ -548,9 +548,10 @@ let compute_xor a b o =
     end
   done ;
 
-  if Iterator.word_size !i > 0
-  then ignore @@ Iterator.discharge !i o (lnot 0) 0
-  else ignore @@ Iterator.discharge !j o (lnot 0) 0 ;
+  let _, _ =
+    if Iterator.word_size !i > 0
+    then Iterator.discharge !i o (lnot 0) 0
+    else Iterator.discharge !j o (lnot 0) 0 in
 
   o.bit_size <- max_word a.bit_size b.bit_size
 
