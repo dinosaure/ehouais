@@ -57,6 +57,7 @@ let add_once_in_hashset =
   fun () -> Set.add set 1
 
 let iter_and_do_nothing_on_ewah =
+  let pos = ref 0 in
   let ewah = Ewah.make ~allocator:Ewah.allocator in
   Stdlib.Hashtbl.iter (fun _ -> function
       | true -> ignore @@ Ewah.add ewah !pos ; incr pos
@@ -65,6 +66,7 @@ let iter_and_do_nothing_on_ewah =
   fun () -> Ewah.each_bit ewah (fun _ () -> ()) ()
 
 let iter_and_do_nothing_on_hashset =
+  let pos = ref 0 in
   let set = Hashset.create 32 in
   Stdlib.Hashtbl.iter
     (fun _ -> function
