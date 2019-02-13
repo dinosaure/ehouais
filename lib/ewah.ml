@@ -33,7 +33,7 @@ module RLW = struct
 
   let set_run_bit rlw bit =
     let word = get rlw in
-    let word = if bit then word land (lnot 1) else word lor 1 in
+    let word = if bit <> 0 then word land (lnot 1) else word lor 1 in
     set rlw word
   [@@inline]
 
@@ -130,12 +130,12 @@ let add_empty_words t v n =
 
   if RLW.get_run_bit t.rlw != v
   && RLW.size t.rlw == 0
-  then RLW.set_run_bit t.rlw (unsafe_bool_of_int v)
+  then RLW.set_run_bit t.rlw v
   else if RLW.get_literal_words t.rlw != 0
           || RLW.get_run_bit t.rlw != v
   then begin
     buffer_push_rlw t 0 ;
-    if v != 0 then RLW.set_run_bit t.rlw (unsafe_bool_of_int v) ;
+    if v != 0 then RLW.set_run_bit t.rlw v ;
     incr added
   end ;
 
@@ -150,7 +150,7 @@ let add_empty_words t v n =
     buffer_push_rlw t 0 ;
     incr added ;
     (* XXX(dinosaure): test_and_set? *)
-    if v != 0 then RLW.set_run_bit t.rlw (unsafe_bool_of_int v) ;
+    if v != 0 then RLW.set_run_bit t.rlw v ;
     RLW.set_running_len t.rlw RLW._rlw_largest_running_count ;
     number := !number - RLW._rlw_largest_literal_count ;
   done ;
@@ -159,7 +159,7 @@ let add_empty_words t v n =
   then begin
     buffer_push_rlw t 0 ;
     incr added ;
-    if v != 0 then RLW.set_run_bit t.rlw (unsafe_bool_of_int v) ;
+    if v != 0 then RLW.set_run_bit t.rlw v ;
     RLW.set_running_len t.rlw !number ;
   end ;
 
@@ -222,8 +222,8 @@ let add_empty_word t v =
 
   if no_literal && run_len == 0
   then begin
-    RLW.set_run_bit t.rlw (unsafe_bool_of_int v) ;
-    assert (RLW.get_run_bit t.rlw == v) ;
+    RLW.set_run_bit t.rlw v ;
+    (* assert (RLW.get_run_bit t.rlw == v) ; *)
   end ;
 
   if no_literal && RLW.get_run_bit t.rlw == v
@@ -238,8 +238,8 @@ let add_empty_word t v =
     assert (RLW.get_run_bit t.rlw == 0) ;
     assert (RLW.get_literal_words t.rlw == 0) ;
 
-    RLW.set_run_bit t.rlw (unsafe_bool_of_int v) ;
-    assert (RLW.get_run_bit t.rlw == v) ;
+    RLW.set_run_bit t.rlw v ;
+    (* assert (RLW.get_run_bit t.rlw == v) ; *)
 
     RLW.set_running_len t.rlw 1 ;
     assert (RLW.get_running_len t.rlw == 1) ;
