@@ -11,7 +11,7 @@ let unsafe_bool_of_int : int -> bool = Obj.magic
 
 let populate tbl n =
   let rec go = function
-    | 0 -> ()
+    | 0 -> Fmt.pr "Database populated.\n%!"
     | n ->
       let str = random_string (Hash.digest_size + 1) in
       let hash = Hash.of_raw_string (String.sub str 0 Hash.digest_size) in
