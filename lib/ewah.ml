@@ -286,7 +286,7 @@ let each_bit t f a =
 
       incr pointer
     done
-  done
+  done ; !a
 
 let compute_not t =
   let pointer = ref 0 in
