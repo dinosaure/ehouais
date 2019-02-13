@@ -67,7 +67,7 @@ let iter_and_do_nothing_on_ewah =
 
 let iter_and_do_nothing_on_hashset =
   let pos = ref 0 in
-  let set = Hashset.create 32 in
+  let set = Set.create 32 in
   Stdlib.Hashtbl.iter
     (fun _ -> function
        | true -> Set.add set !pos ; incr pos
