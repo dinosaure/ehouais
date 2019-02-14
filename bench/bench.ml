@@ -63,7 +63,7 @@ let iter_and_do_nothing_on_ewah =
       | true -> ignore @@ Ewah.add ewah !pos ; incr pos
       | false -> incr pos)
     tbl ;
-  fun () -> Ewah.each_bit ewah (fun _ () -> ()) ()
+  fun () -> Ewah.each_bit ewah (fun _ -> ())
 
 let iter_and_do_nothing_on_hashset =
   let pos = ref 0 in
