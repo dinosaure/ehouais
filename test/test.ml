@@ -6,7 +6,7 @@ let test_set ewah pos reject =
   else
     ( Ewah.set ewah pos ;
       let set = ref false in
-      Ewah.each_bit ewah (fun pos' () -> if pos = pos' then set := true) () ;
+      Ewah.each_bit ewah (fun pos' -> if pos = pos' then set := true) ;
       Alcotest.(check bool) "pass" !set true )
 
 let test_empty ewah is_empty =
@@ -15,11 +15,11 @@ let test_empty ewah is_empty =
   if is_empty
   then
     ( let is_empty = ref true in
-      Ewah.each_bit ewah (fun _ () -> is_empty := false) () ;
+      Ewah.each_bit ewah (fun _ -> is_empty := false) ;
       Alcotest.(check bool) "is_empty" !is_empty true )
   else
     ( let is_empty = ref true in
-      Ewah.each_bit ewah (fun _ () -> is_empty := false) () ;
+      Ewah.each_bit ewah (fun _ -> is_empty := false) ;
       Alcotest.(check bool) "is_empty" !is_empty false )
 
 let test_not_on_singleton n =
@@ -29,10 +29,17 @@ let test_not_on_singleton n =
   Ewah.set ewah n ;
   Ewah.compute_not ewah ;
   let exists = ref false in
-  Ewah.each_bit ewah (fun pos () -> if pos = n then exists := true) () ;
+  Ewah.each_bit ewah (fun pos -> if pos = n then exists := true) ;
   Alcotest.(check bool) "not exists" !exists false
 
 module Set = Set.Make(struct type t = int let compare a b = a - b end)
+
+let ewah_fold ewah f a =
+  let a = ref a in
+  Ewah.each_bit ewah (fun x -> a := f x !a) ; !a
+
+let xor a b =
+  Set.(diff (union a b) (inter a b))
 
 let test_xor a b =
   let name = Fmt.strf "xor %a %a"
@@ -45,9 +52,11 @@ let test_xor a b =
   Set.iter (fun x -> Ewah.set ewah_b x) b ;
   let ewah_o = Ewah.make ~allocator:Ewah.allocator in
   Ewah.compute_xor ewah_a ewah_b ewah_o ;
-  let o = Set.inter a b in
-  let res = Ewah.each_bit ewah_o (fun pos acc -> Set.mem pos o && acc) true in
-  Alcotest.(check bool) "xor" res true
+  let o = xor a b in
+  let res = ewah_fold ewah_o (fun pos acc -> Set.mem pos o && acc) true in
+  let len = ewah_fold ewah_o (fun _ acc -> succ acc) 0 in
+  Alcotest.(check bool) "xor" res true ;
+  Alcotest.(check int) "len" (Set.cardinal o) len
 
 let singleton x =
   let ewah = Ewah.make ~allocator:Ewah.allocator in
