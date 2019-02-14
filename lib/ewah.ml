@@ -1,8 +1,6 @@
 type buf = (int, Bigarray.int_elt, Bigarray.c_layout) Bigarray.Array1.t
 type rlw = (int, Bigarray.int_elt, Bigarray.c_layout) Bigarray.Array0.t
 
-type word = int
-
 let _bits_in_word = Sys.word_size - 1 (* GC bit *)
 let _size_of_word = Sys.word_size / 8
 
@@ -35,13 +33,6 @@ module RLW = struct
     set rlw word
   [@@inline]
 
-  let xor_run_bit rlw =
-    let word = get rlw in
-    if (word land 1) != 0
-    then set rlw (word land (lnot 1))
-    else set rlw (word lor 1)
-  [@@inline]
-
   let set_running_len rlw len =
     let word = get rlw in
     let word = word lor _rlw_largest_running_count_shift in
@@ -71,7 +62,7 @@ module RLW = struct
   [@@inline]
 end
 
-type ewah =
+type t =
   { mutable buffer : buf
   ; mutable buffer_size : int
   ; mutable alloc_size : int
@@ -283,49 +274,25 @@ let pp =
   let iter f ewah = each_bit ewah f in
   Fmt.iter iter Fmt.int
 
-let compute_not t =
-  let pointer = ref 0 in
-
-  while !pointer < t.buffer_size
-  do
-    let word = slice t.buffer !pointer in
-    RLW.xor_run_bit word ;
-    incr pointer ;
-
-    let literals = RLW.get_literal_words word in
-    for _ = 0 to literals - 1 do
-      set t.buffer !pointer (lnot (get t.buffer !pointer)) ;
-      incr pointer
-    done
-  done
-
 type 'a rd = < rd: unit; .. > as 'a
-type 'a wr = < wr: unit; .. > as 'a
 
 module PRLW : sig
   type 'a t
 
   type rd_only = < rd: unit; > t
-  type wr_only = < wr: unit; > t
   (* XXX(dinosaure): to prove [const] assertion. *)
 
   val const : rlw -> rd_only
-  val get : 'a rd t -> int
-  val set : 'a wr t -> int -> unit
   val get_literal_words : 'a rd t -> int
   val get_running_len : 'a rd t -> int
   val get_run_bit : 'a rd t -> int
 end = struct
   type 'a rd = < rd: unit; .. > as 'a
-  type 'a wr = < wr: unit; .. > as 'a
   type 'a t = rlw
 
   type rd_only = < rd: unit; > t
-  type wr_only = < wr: unit; > t
 
   external const : rlw -> rd_only = "%identity"
-  let get : 'a rd t -> int = fun rlw -> RLW.get rlw [@@inline]
-  let set : 'a wr t -> int -> unit = fun rlw word -> RLW.set rlw word [@@inline]
   let get_literal_words : 'a rd t -> int = fun rlw -> RLW.get_literal_words rlw [@@inline]
   let get_running_len : 'a rd t -> int = fun rlw -> RLW.get_running_len rlw [@@inline]
   let get_run_bit : 'a rd t -> int = fun rlw -> RLW.get_run_bit rlw [@@inline]
@@ -335,24 +302,19 @@ module PBuf : sig
   type 'a t
 
   type rd_only = < rd: unit; > t
-  type wr_only = < wr: unit; > t
 
   val const : buf -> rd_only
   val get : 'a rd t -> int -> int
-  val set : 'a wr t -> int -> int -> unit
   val slice : 'a rd t -> int -> rlw
   val unsafe_shift : 'a rd t -> int -> buf
 end = struct
   type 'a rd = < rd: unit; .. > as 'a
-  type 'a wr = < wr: unit; .. > as 'a
   type 'a t = buf
 
   type rd_only = < rd: unit; > t
-  type wr_only = < wr: unit; > t
 
   external const : buf -> rd_only = "%identity"
   let get : 'a rd t -> int -> int = fun buf off -> get buf off [@@inline]
-  let set : 'a wr t -> int -> int -> unit = fun buf off word -> set buf off word [@@inline]
   let slice : 'a rd t -> int -> rlw = fun buf off -> slice buf off [@@inline]
   let unsafe_shift : 'a rd t -> int -> buf =
     fun buf off ->
@@ -361,6 +323,8 @@ end = struct
 end
 
 module Iterator = struct
+  type ewah = t
+
   type t =
     { buffer : PBuf.rd_only
     ; size : int
@@ -373,29 +337,6 @@ module Iterator = struct
     ; mutable running_len : int
     ; mutable literal_word_offset : int
     ; mutable running_bit : int }
-
-  let pp_uncompressed_rlw ppf x =
-    Fmt.pf ppf "{ @[<hov>word= %08x;@ \
-                         literal_words= %d;@ \
-                         running_len= %d;@ \
-                         literal_word_offset= %d;@ \
-                         running_bit= %d;@] }"
-      (PRLW.get x.word)
-      x.literal_words
-      x.running_len
-      x.literal_word_offset
-      x.running_bit
-
-  let pp ppf t =
-    Fmt.pf ppf "{ [<hov>buffer= <buffer>;@ \
-                        size= %d;@ \
-                        pointer= %d;@ \
-                        literal_word_start= %d;@ \
-                        rlw= @[<hov>%a@]@] }"
-      t.size
-      t.pointer
-      t.literal_word_start
-      pp_uncompressed_rlw t.rlw
 
   let zero =
     let res = Bigarray.Array0.create Bigarray.Int Bigarray.c_layout in
@@ -527,7 +468,7 @@ let add_empty_words t v n =
   else
     ( t.bit_size <- t.bit_size + (n * _bits_in_word) ; add_empty_words t v n )
 
-let compute_xor a b o =
+let xor a b o =
   let i = Iterator.make a in
   let j = Iterator.make b in
 

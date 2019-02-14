@@ -22,16 +22,6 @@ let test_empty ewah is_empty =
       Ewah.each_bit ewah (fun _ -> is_empty := false) ;
       Alcotest.(check bool) "is_empty" !is_empty false )
 
-let test_not_on_singleton n =
-  let name = Fmt.strf "not singleton %d" n in
-  Alcotest.test_case name `Quick @@ fun () ->
-  let ewah = Ewah.make ~allocator:Ewah.allocator in
-  Ewah.set ewah n ;
-  Ewah.compute_not ewah ;
-  let exists = ref false in
-  Ewah.each_bit ewah (fun pos -> if pos = n then exists := true) ;
-  Alcotest.(check bool) "not exists" !exists false
-
 module Set = Set.Make(struct type t = int let compare a b = a - b end)
 
 let ewah_fold ewah f a =
@@ -51,7 +41,7 @@ let test_xor a b =
   Set.iter (fun x -> Ewah.set ewah_a x) a ;
   Set.iter (fun x -> Ewah.set ewah_b x) b ;
   let ewah_o = Ewah.make ~allocator:Ewah.allocator in
-  Ewah.compute_xor ewah_a ewah_b ewah_o ;
+  Ewah.xor ewah_a ewah_b ewah_o ;
   let o = xor a b in
   let res = ewah_fold ewah_o (fun pos acc -> Set.mem pos o && acc) true in
   let len = ewah_fold ewah_o (fun _ acc -> succ acc) 0 in
@@ -80,11 +70,6 @@ let empty_operation =
 let empty_operation =
   List.map (fun (ewah, is_empty) -> test_empty ewah is_empty) empty_operation
 
-let not_operation = [ 0; 1; 42 ]
-
-let not_operation =
-  List.map test_not_on_singleton not_operation
-
 let xor_operation =
   [ [ 1; 2; 3 ], [ 2 ]
   ; [ 1; 2; 3 ], [ 4; 5; 6; ]
@@ -99,5 +84,4 @@ let () =
   Alcotest.run "ewah"
     [ "set", set_operation ()
     ; "empty", empty_operation
-    ; "not", not_operation
     ; "xor", xor_operation ]
