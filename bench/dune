@@ -1,6 +1,6 @@
 (executable
  (name bench)
- (libraries digestif.c bechamel bechamel-js fmt ewah))
+ (libraries digestif.c bechamel bechamel-js fmt bitv ewah))
 
 (rule
  (targets add.json)

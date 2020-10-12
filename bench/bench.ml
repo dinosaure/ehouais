@@ -48,9 +48,20 @@ let add_in_hashset tbl =
          | false -> incr pos)
       tbl
 
+let add_in_bitv tbl =
+  let set = Bitv.create 32 false in
+  let pos = ref 0 in
+  Staged.stage @@ fun () ->
+    Hashtbl.iter
+      (fun _ -> function
+         | true -> Bitv.set set !pos true ; incr pos
+         | false -> incr pos)
+      tbl
+
 let test_add_in_ewah = Test.make ~name:"ewah" (add_in_ewah tbl)
 let test_add_in_hashset = Test.make ~name:"set" (add_in_hashset tbl)
-let test = Test.make_grouped ~name:"add" [ test_add_in_ewah; test_add_in_hashset; ]
+let test_add_in_bitv = Test.make ~name:"bitv" (add_in_bitv tbl)
+let test = Test.make_grouped ~name:"add" [ test_add_in_ewah; test_add_in_hashset; test_add_in_bitv; ]
 
 let benchmark () =
   let ols =
@@ -58,7 +69,7 @@ let benchmark () =
   let instances =
     Instance.[ minor_allocated; major_allocated; monotonic_clock ] in
   let cfg =
-    Benchmark.cfg ~limit:2000 ~quota:(Time.second 0.5) ~kde:(Some 1000) () in
+    Benchmark.cfg ~limit:3000 ~quota:(Time.second 2.0) ~kde:(Some 1000) () in
   let raw_results = Benchmark.all cfg instances test in
   let results =
     List.map (fun instance -> Analyze.all ols instance raw_results) instances
