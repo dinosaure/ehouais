@@ -165,11 +165,11 @@ let add_literal t literal =
 exception Break
 
 let add_dirty_words t buffer n negate =
-  try
     let number = ref n in
     let buffer_offset = ref 0 in
+    let continue = ref true in
 
-    while true do
+    while !continue do
       let literals = RLW.get_literal_words t.rlw in
       let can_add = min_word n (RLW._rlw_largest_literal_count - literals) in
 
@@ -191,13 +191,13 @@ let add_dirty_words t buffer n negate =
 
       t.bit_size <- t.bit_size + (can_add * _bits_in_word) ;
 
-      if !number - can_add == 0 then raise Break ;
-
-      buffer_push_rlw t 0 ;
-      buffer_offset := !buffer_offset + can_add ;
-      number := !number - can_add ;
+      if !number - can_add == 0
+      then continue := false
+      else
+        ( buffer_push_rlw t 0
+        ; buffer_offset := !buffer_offset + can_add
+        ; number := !number - can_add )
     done
-  with Break -> ()
 
 let add_empty_word t v =
   let no_literal = RLW.get_literal_words t.rlw == 0 in
@@ -238,7 +238,7 @@ let add t word =
   else add_literal t word
 
 let (//) n d = (n + d - 1) / d [@@inline]
-let (%) x n = x mod n  [@@inline] (* XXX(dinosaure): optimize it! *)
+let (%) x n = x mod n [@@inline] (* XXX(dinosaure): optimize it! *)
 
 let each_bit t f =
   let pointer = ref 0 in
@@ -392,7 +392,7 @@ module Iterator = struct
       do
         if t.rlw.running_len > !x
         then ( t.rlw.running_len <- t.rlw.running_len - !x ;
-               raise Return ) ;
+               raise_notrace Return ) ;
 
         x := !x - t.rlw.running_len ;
         t.rlw.running_len <- 0 ;
@@ -406,7 +406,7 @@ module Iterator = struct
         if !x > 0 || word_size t == 0
         then
           ( if not (next t)
-            then raise Break ;
+            then raise_notrace Break ;
 
             t.literal_word_start <- literal_words t + t.rlw.literal_word_offset )
       done

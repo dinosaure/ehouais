@@ -1,5 +1,4 @@
 type buf = (int, Bigarray.int_elt, Bigarray.c_layout) Bigarray.Array1.t
-type rlw = (int, Bigarray.int_elt, Bigarray.c_layout) Bigarray.Array0.t
 type t
 
 exception Invalid_bit

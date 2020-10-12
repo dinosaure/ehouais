@@ -1,0 +1,1046 @@
+<!DOCTYPE html>
+<head>
+  <meta charset="utf-8">
+  <script src="https://d3js.org/d3.v5.min.js"></script>
+  <script src="https://unpkg.com/d3-simple-slider"></script>
+  <script src="https://unpkg.com/simple-statistics@7.0.2/dist/simple-statistics.min.js"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/9.15.6/styles/default.min.css">
+  <link href="style.css" rel="stylesheet" type="text/css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/9.15.6/highlight.min.js"></script>
+  <style>
+    *{
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body{
+    width: 100%;
+    height: 100%;
+    font-family:Helvetica Neue,metric,sans-serif;
+    text-rendering: optimizeLegibility;
+}
+
+.center{
+    width: 500px;
+    margin:auto
+}
+
+text{
+    font-family: metric,sans-serif;
+}
+
+.ml {
+    text-align: left
+}
+
+svg {
+    overflow: hidden;
+    margin: auto
+}
+
+.axis line, .axis path{
+    stroke: #2E3532;
+    stroke-width:1px;
+}
+
+.axisTitle, .axis text{
+    fill: #2E3532;
+    font-size:12px;
+}
+
+.background {
+    fill: #FBFBFB;
+    stroke: #2E3532;
+}
+
+.axisTitle, .chartTitle{
+    text-anchor: middle
+}
+
+
+.ytitle {
+    text-anchor: middle;
+    transform: rotate(90deg)
+}
+
+.warningtext{
+    text-anchor: center;
+    fill: #F06449;
+}
+
+.regLine {
+    stroke: #F06449;
+    stroke-width:2px;
+    opacity:0.7
+}
+
+.circle {
+    fill: #4ECDC4;
+    stroke: #292f36;
+    stroke-width:0.3px
+}
+
+table {
+    margin:auto;
+    text-align:left;
+    border-spacing: 15px 5px;
+    border: 1px solid #2E3532
+}
+
+th {
+    text-align: center;
+    color:#F06449
+}
+
+
+tr {
+    fill: #2E3532;
+    font-size:10px
+}
+
+.tooltip .tooltiptext {
+  visibility: hidden;
+  width: auto;
+  background-color: #F06449;
+  color: #FFFFFF;
+  text-align: center;
+  border-radius: 10px;
+  padding: 0 5px 0 5px;
+  /* Position the tooltip */
+  position: absolute;
+  z-index: 1;
+}
+
+.tooltip:hover .tooltiptext {
+  visibility: visible;
+}
+.bar {
+    fill: #4ECDC4;
+    stroke:#292f36;
+}
+.bar:hover {
+    fill: #F06449;
+    stroke:#292f36;
+    stroke-width:1px;
+}
+
+.radio {
+    margin: auto;
+    width : 200px;
+}
+
+.wrapper {
+    display: grid;
+    margin: 50px 50px 50px 50px;
+    gap: 10px 20px;
+    grid-auto-rows: minmax(20px, auto);
+    text-align: center;
+    place-items: center;
+}
+
+.mainTitle, .summarizeTitle {
+    height:30px;
+    width: auto;
+    border-radius: 2px;
+    padding: 0 45px 0 45px;
+    border-style: solid;
+    border-width:1px;
+    box-shadow: 2px 2px 1px rgba(0,0,0,0.1);
+    color:  #2E3532;
+    background: #FBFBFB;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: bold;
+}
+
+.slidecontainer{
+    width: 50%;
+}
+
+  </style>
+</head>
+<body>
+
+  <script type="text/javascript">
+    // structure of JSON
+// { xLabel: string,
+//   yLabel: string,
+//   series: [ tests ] }
+//
+// tests := { name: string,
+//            description: { start : int, sampling: float, stabilize: bool,
+//                           quota: float, limit: int, instances: [string],
+//                           samples: int, time : float}
+//            dataset: [ point ],
+//            kde : [ v: float ] (optional)
+//            result: { estimate: float, r_square: float (optional) } }
+//
+// point := { x : double,
+//            y : double }
+//
+// xLabel and yLabel are the same for any tests
+window.onload = function () {
+
+const wsvg = 600;
+const hsvg = 400;
+const wslider = 200;
+const hslider = 50;
+const margin = {left:50,right:50,top:20,bottom:50};
+const dotSize = 1.5;
+const innerW = wsvg-(margin.left+margin.right);
+const innerH = hsvg-(margin.top+margin.bottom);
+
+const marginbar = {left:150,right:150,top:50,bottom:50};
+const wbar = 900;
+const innerWbar = wbar-(marginbar.left+marginbar.right);
+
+const SQRT_2PI = Math.sqrt(2 * Math.PI);
+
+// Main function : place containers and call plot functions.
+function render(inputs) {
+    inputs.series.forEach(
+	function(serie) {
+	    serie.dataset.forEach(
+		function(d) {
+		    d.x = +d.x;
+		    d.y = +d.y;
+		});}
+    );
+
+    // First step : check if there is no kde/histogram data at all in
+    // the benchmarks, in which case, we want to reduce our layout to
+    // one column.
+    let nonempty_kde = false;
+    inputs.series.forEach(function (serie) {
+	if ('kde' in serie) {
+	    nonempty_kde = nonempty_kde || true;} });
+    const nb_col = nonempty_kde ? 2 : 1;
+
+    // ************************************************ //
+    //              Layout of the page                  //
+    // ************************************************ //
+    // + a summarize bar graph on top
+    // + one section for each benchmark which includes
+    //     * 1 title
+    //     * 1 linear regression graph and its title and information table
+    //     * if kde data are available a histogram/kde graph with its control panel.
+    //
+    // If none of the benchmarks has kde data, the layout is the same
+    // but with only one column (no hist/kde graphs).
+    //
+    //
+    //              c1:        c2:
+    //
+    // r1:            *title*
+    //           ___________________
+    // r2:      |   summarize bar   |
+    //          |___________________|
+    //
+    // r3:           *title-1*
+    //
+    // r4:        *title*   *radio*
+    //           _______     _______
+    // r5:      | lr-1  |   | kde-1 |
+    //          |_______|   |_______|
+    //
+    // r6:      *infos-1*   *slider-1*
+    // ..
+    // r(4i+3):       *title-i*
+    //
+    // r(4i+4):  *title*     *radio*
+    //           _______     _______
+    // r(4i+5): | lr-i  |   | kde-i |
+    //          |_______|   |_______|
+    //
+    // r(4i+6): *infos-i*   *slider-i*
+    //
+    // etc ..
+
+      const main = d3.select("body")
+	  .append("div")
+	    .attr("class", "wrapper")
+	    .style("grid-template-columns", (nonempty_kde ? "repeat(2,"+wsvg+"px)" : "900px"))
+	    .attr("id", "main");
+
+    // ************************************************ //
+    //              Summarize bar graph                 //
+    // ************************************************ //
+
+    // Title
+    main.append("div")
+   	  .style("grid-row", "1")
+      	.style("grid-column", "1 / "+(nb_col+1))
+  	  .attr("class", "summarizeTitle")
+  	.text("Benchmarks summary");
+
+    // Bar graph
+    let bar_container = main
+	.append("div")
+   	  .style("grid-row", "2")
+      	  .style("grid-column", "1 / "+(nb_col+1))
+	  .attr("id", "bar");
+    plot_summarize_bar_graph(bar_container, inputs);
+
+
+    // ************************************************ //
+    //              Layout for lr/kde graphs            //
+    // ************************************************ //
+
+    // Benchmark titles
+    const titles = main
+	  .selectAll(".mainTitle")
+	  .data(inputs.series)
+	  .enter()
+	  .append("div")
+	    .attr("id", (data, i) => "title-"+i)
+   	    .style("grid-row", (data,i) =>""+(4*i+3))
+      	    .style("grid-column", "1 / "+(nb_col+1))
+  	    .attr("class","mainTitle")
+	  .append("text")
+  	    .attr("x", wsvg)
+  	    .attr("y", margin.top-10)
+            .text((data, i) => "#"+data.name);
+
+    // Linear regression graph titles
+    const titles_lr = main
+	  .selectAll("#title_lr")
+	  .data(inputs.series)
+	  .enter()
+	  .append("div")
+            .attr("id",  "title_lr")
+   	    .style("grid-row", (data,i) =>""+(4*i+4))
+   	    .style("grid-column", "1")
+	  .append("text")
+  	    .attr("class","chartTitle")
+  	    .text("Linear regression");
+
+    // Containers for linear regression graphs
+    const lr_graphs = main
+	  .selectAll(".lr")
+	  .data(inputs.series)
+	  .enter()
+	  .append("div")
+            .attr("class", "lr")
+	    .attr("id", (data, i) => "linearRegression-"+i)
+   	    .style("grid-row", (data,i) =>""+(4*i+5))
+   	  .style("grid-column", "1");
+
+    // Containers for linear regression info tables
+    const lr_info = main
+	  .selectAll(".lr-info")
+	  .data(inputs.series)
+	  .enter()
+	  .append("div")
+            .attr("class", "lr-info")
+	    .attr("id", (data, i) => "lr-info-"+i)
+   	    .style("grid-row", (data,i) =>""+(4*i+6))
+            .style("grid-column", "1");
+
+    let radio_div, kde_graphs, kde_controler;
+    if (nonempty_kde) {
+	// Containers for radio buttons to choose between histogram/kde plots
+	radio_div = main
+	      .selectAll(".radio_div")
+	      .data(inputs.series)
+	      .enter()
+	      .append("div")
+              .attr("class",  "radio")
+	      .attr("id", (d, i) => "radio_div"+i)
+   	      .style("grid-row", (data,i) =>""+(4*i+4))
+   	      .style("grid-column", "2");
+
+	// Containers for kde/hist graph
+	kde_graphs = main
+	      .selectAll(".kde")
+	      .data(inputs.series)
+	      .enter()
+	      .append("div")
+              .attr("class", "kde")
+	      .attr("id", (data, i) => "histKde-"+i)
+   	      .style("grid-row", (data,i) =>""+(4*i+5))
+   	      .style("grid-column", "2");
+
+	// Containers for kde/hist controlers
+	kde_controler = main
+	      .selectAll(".kde-controler")
+	      .data(inputs.series)
+	      .enter()
+	      .append("div")
+              .attr("class", "kde-controler")
+	      .attr("id", (data, i) => "kde-controler-"+i)
+   	      .style("grid-row", (data,i) =>""+(4*i+6))
+              .style("grid-column", "2");
+    }
+
+    // ************************************************ //
+    //          Linear regression graph                 //
+    // ************************************************ //
+    lr_graphs.each( function(serie, i) {
+	//Curves for each input
+	const xMin = 0;
+	const xMax = d3.max(serie.dataset, d => d.x);
+	const yMin = 0;
+	const yMax = d3.max(serie.dataset, d => d.y);
+
+	// Define x axis
+	const xScale = d3.scaleLinear()
+  	      .domain([xMin,xMax])
+  	      .range([0,innerW])
+  	      .nice();
+	const xAxis = d3.axisBottom()
+  	      .scale(xScale)
+  	      .ticks(8, "s");
+	// "s" = number format such as 1000 -> 1k
+
+	// Define y axis
+	const yScale = d3.scaleLinear()
+  	      .domain([yMin,yMax])
+  	      .range([innerH,0])
+  	      .nice();
+	const yAxis = d3.axisLeft()
+  	      .scale(yScale)
+  	      .ticks(8, "s");
+
+	// Svg
+  	const plot = d3.select(this)
+	    .append("svg")
+  	      .attr("width",wsvg)
+  	      .attr("height",hsvg);
+	// Color background
+	plot.append("rect")
+  	    .attr("x",margin.left)
+  	    .attr("y",margin.top)
+  	    .attr("width",innerW)
+  	    .attr("height",innerH)
+  	    .attr("class","background axis");
+	// Plot axis
+	plot.append("g")
+  	    .attr("transform",
+	 	  "translate("+margin.left+","
+	 	  +(hsvg-margin.bottom)+")")
+	    .attr("class", "axis")
+  	    .call(xAxis);
+	plot.append("g")
+  	    .attr("transform",
+	  	  "translate("+margin.left+","
+		  +margin.top+")")
+	    .attr("class", "axis")
+  	    .call(yAxis);
+	// Print axis titles
+	plot.append("text")
+	    .attr("class", "axisTitle")
+	    .attr("x", wsvg/2)
+	    .attr("y", hsvg-10)
+	    .text(inputs.xLabel);
+	plot.append("text")
+	    .attr("class", "axisTitle ytitle")
+	    .attr("transform-origin", 0, hsvg/2)
+	    .attr("x", 0)
+	    .attr("y", hsvg/2)
+	    .text(inputs.yLabel);
+
+	// Plot data
+	plot.append("g")
+	    .attr("transform",
+		  "translate("+margin.left+","
+		  +margin.top+")")
+  	    .selectAll("circle")
+  	    .data(serie.dataset)
+  	    .enter()
+  	    .append("circle")
+	    .attr("class", "circle")
+  	    .attr("r", dotSize)
+  	    .attr("cx", d => xScale(d.x))
+  	    .attr("cy", d => yScale(d.y));
+
+	// Plot linear regression line
+
+	const xVals = serie.dataset.map((e,j) => e.x);
+	const yVals = serie.dataset.map((e,j) => e.y);
+	const pairs = [];
+	xVals.forEach((d,i) => pairs.push([xVals[i],yVals[i]]));
+	const linReg = ss.linearRegression(pairs);
+	const linRegLine = ss.linearRegressionLine(linReg);
+	let line = plot
+	    .append("line")
+    	      .attr("transform","translate("+margin.left+","+margin.top+")")
+    	      .attr("class","regLine")
+    	      .attr("x1",xScale(xMin))
+    	      .attr("x2",xScale(xMin))
+    	      .attr("y1",yScale(linRegLine(xMin)))
+    	      .attr("y2",yScale(linRegLine(xMin)));
+	line.transition().duration(1000).delay(2000)
+    	      .attr("x2",xScale(xMax))
+    	      .attr("y2",yScale(linRegLine(xMax)));
+
+	// Add text boxes
+	//const meanX = ss.mean(xVals).toFixed(0);
+	//const meanY = ss.mean(yVals).toFixed(2);
+	//const varX = ss.sampleVariance(xVals).toFixed(0);
+	//const varY = ss.sampleVariance(yVals).toFixed(1);
+	//const corCoeff = ss.sampleCorrelation(xVals,yVals).toFixed(3);
+
+	const lr_results = [
+	    ["Linear regression line", "y = "+linReg.b.toFixed(2)+" + "+linReg.m.toFixed(3)+"x"],
+	    ["Coefficient", serie.result.estimate],
+	    ["R²", serie.result.r_square]
+	];
+
+	const sampling_to_string = sampling =>
+              (Number.isInteger(sampling) ?  "`Linear "+sampling+"" : "`Geometric "+sampling+"");
+
+	const format = v  => d3.format("s")(v);
+
+	const param_benchmarks = [
+	    ["LR sampling (sampling)", sampling_to_string(serie.description.sampling)],
+	    ["Start (start)", serie.description.start],
+	    ["Benchmark runtime (time / quota)",
+	     format(serie.description.time) + " / " + format(serie.description.quota)],
+	    ["Number of runs (samples)", serie.description.samples + " / " + serie.description.limit],
+	    ["Stabilized GC (stabilize)", serie.description.stabilize]
+	];
+
+	const table = d3.select("#lr-info-"+i)
+	      .append("table");
+
+	table.append("thead")
+	    .append("tr")
+	    .append("th")
+	    .attr("colspan", 2)
+	    .attr("scope", "col")
+	    .text("Linear regression results");
+
+	table.append("tbody")
+	    .selectAll("tr")
+	    .data(lr_results)
+	    .enter()
+	    .append("tr")
+	    .selectAll("td")
+	    .data(d => d)
+	    .enter()
+	    .append("td")
+	    .text(d=>d);
+
+	table.append("thead")
+	    .append("tr")
+	    .append("th")
+	    .attr("class", "tooltip")
+	    .attr("colspan", 2)
+	    .attr("scope", "col")
+	    .text("Benchmarks parameters")
+	    .append("span")
+	    .attr("class","tooltiptext")
+	    .text("See [Benchmarks.stats]");
+
+	table.append("tbody")
+	    .selectAll("tr")
+	    .data(param_benchmarks)
+	    .enter()
+	    .append("tr")
+	    .selectAll("td")
+	    .data(d => d)
+	    .enter()
+	    .append("td")
+	    .text(d=>d);
+
+    });
+
+    // ************************************************ //
+    //         Histogram and kde graphs                 //
+    // ************************************************ //
+    if (nonempty_kde) {
+        kde_graphs.each(function (serie, i) {
+
+	    // Svg for histogram and kde graphs
+	    let pdfgraph = d3.select(this)
+		.append("svg")
+		.attr("id", "pdfgraph")
+		.attr("width", wsvg)
+		.attr("height", hsvg)
+		.append("g")
+		.attr("transform", "translate("+margin.left+","+margin.top+")");
+
+	    // If there is no kde field in the data [serie], some note
+	    // is written in the svg window.
+	    if (!('kde' in serie)) {
+		pdfgraph.append("text")
+		    .attr("x", (margin.left+margin.right+wsvg)/2)
+		    .attr("y", (margin.top+margin.bottom+hsvg)/2)
+		    .attr("class", "warning")
+		    .text("No available data");
+	    } else if (d3.max(serie.kde) == d3.min(serie.kde)) {
+		pdfgraph.append("text")
+		    .attr("x", wsvg/2)
+		    .attr("y", hsvg/2)
+		    .attr("class", "warningtext")
+		    .text("All data have same value.");
+	    } else {
+		const data = serie.kde;
+		//Some default values
+		const min_slider = (d3.max(data)-d3.min(data))/data.length;
+		const max_slider = (d3.max(data)-d3.min(data))/30;
+		let vslider = min_slider;
+
+		//Radio buttons
+		const form = d3.select("#radio_div"+i)
+		      .append("form");
+
+		form.append("input")
+		    .attr("type", "radio")
+		    .attr("name", "graph")
+		    .attr("value", "hist"+i)
+		    .attr("name", "graph")
+		    .attr("checked", "checked")
+		    .on("change", () => plot_chosen_graph(d3.select(this), "hist"));
+		form.append("label")
+		    .attr("for", "hist"+i)
+		    .text("Histogram");
+		form.append("input")
+		    .attr("type", "radio")
+		    .attr("value", "kde"+i)
+		    .attr("name", "graph")
+		    .on("change", () => plot_chosen_graph(d3.select(this), "kde"));
+		form.append("label")
+		    .attr("for", "kde"+i)
+		    .text("KDE");
+
+		//axis
+		const min = d3.min(data),
+		      max = d3.max(data);
+		const minX = d3.max([0, min-max_slider]),
+		      maxX = max+max_slider;
+
+		//X axis is the same for both graphs (histogram and kde)
+		const xscale = d3.scaleLinear()
+		      .range([0, innerW])
+		      .domain([minX, maxX])
+		      .nice();
+		const xAxis = d3.axisBottom()
+		      .scale(xscale)
+		      .ticks(8, "s");
+
+		//Y axis has a different domain value between both graphs.
+		//So yscale.domain() is defined individually for each plot.
+		const yscale = d3.scaleLinear()
+		      .range([0, innerH])
+		      .nice();
+		const yAxis = d3.axisLeft()
+		      .scale(yscale)
+		      .ticks(8, "s");
+
+		//x value for kde graph
+		const n = 1000;
+		const x = Array(n);
+		const xmin = d3.min(xscale.domain()),
+		      xmax = d3.max(xscale.domain());
+		for (let i=0; i<n; i++) { x[i] = xmin + i*(xmax-xmin)/n; }
+
+		//Compute kde function for min bandwidth value to determine to determine
+		//the max value of Y axis. Only happens one time when loading the webpage.
+		const kde = kernelDensityEstimation(data, min_slider);
+		const v = new Array(n);
+		for (let i=0; i<n;i++){ v[i] = kde(x[i]);}
+		const maxYkde = d3.max(v),
+		      maxYhist = d3.max(histogram(data, max_slider, min, max));
+
+		//background
+		pdfgraph
+		    .append("rect")
+  		    .attr("x", 0)
+  		    .attr("y", 0)
+  		    .attr("width", innerW)
+  		    .attr("height", innerH)
+  		    .attr("class","background axis");
+
+		// x Axis
+		const gxAxis = pdfgraph
+	              .append("g")
+	              .attr("transform","translate(0"+","+innerH+")")
+	              .attr("class", "axis")
+	              .call(xAxis);
+
+		// y Axis
+		const gyAxis = pdfgraph
+	              .append("g")
+	              .attr("class", "axis")
+	              .call(yAxis);
+
+		// X Axis title
+		pdfgraph.append("text")
+		    .attr("class", "axisTitle")
+		    .attr("x", innerW/2)
+		    .attr("y", innerH+40)
+		    .text("Estimated "+inputs.yLabel);
+
+		plot_chosen_graph(d3.select(this), "hist");
+
+		function plot_chosen_graph(container, choice) {
+
+
+		    container.selectAll(".bar").remove();
+		    container.select(".mypath").remove();
+		    container.select(".ytitle").remove();
+
+		    // Erasing control panels if it exists and initializing it
+		    const control_container = d3.select("#kde-controler-"+i);
+		    const slider = control_container.select("#slider-"+i);
+		    const slidertitle = control_container.select("#slidertitle-"+i);
+		    if (!slider.empty())  {
+			slider.remove();
+		    }
+		    if (!slidertitle.empty())  {
+			slidertitle.remove();
+		    }
+
+		    //Hist part
+		    if (choice=="hist") {
+			// Defined yAxis
+			yscale.domain([maxYhist, 0]).nice();
+			yAxis.scale(yscale);
+			gyAxis.call(yAxis);
+
+			// y Axis title
+			pdfgraph.append("text")
+			    .attr("transform-origin", "10 "+(innerH/2))
+			    .attr("class", "axisTitle ytitle")
+			    .attr("x", 10)
+			    .attr("y", innerH/2)
+			    .text("Count");
+
+			const barwidth = vslider;
+
+			const update_hist =
+			      plot_histogram(pdfgraph, data, barwidth, xscale, yscale);
+
+			//slider
+			control_container
+			    .insert("p")
+			    .attr("align", "center")
+			    .attr("id", "slidertitle-"+i)
+			    .text("Barwidth");
+
+			control_container
+			    .insert("svg")
+			    .attr("width", wsvg)
+			    .attr("height", hslider)
+			    .attr("id", "slider-"+i)
+			    .append("g")
+			    .attr("transform", "translate("+(wsvg-wslider)/2+",10)")
+			    .call(d3
+				  .sliderBottom()
+				  .min(min_slider)
+				  .max(max_slider)
+				  .width(wslider)
+				  .ticks(5, "s")
+				  .default(vslider)
+				  .fill("red")
+				  .on("onchange", (value) => {
+				      if (value > 0) {
+					  vslider=value;
+					  update_hist(vslider);}}));
+		    } else {
+			//Defined yAxis
+			yscale.domain([maxYkde, 0]).nice();
+			yAxis.scale(yscale);
+			gyAxis.call(yAxis);
+
+			// y Axis title
+			pdfgraph.append("text")
+			    .attr("transform-origin", "10 "+(innerH/2))
+			    .attr("class", "axisTitle ytitle")
+			    .attr("x", +10)
+			    .attr("y", innerH/2)
+			    .text("Density");
+
+			const bandwidth = vslider;
+			const update_kde = plot_kde(pdfgraph, data, bandwidth, xscale, yscale, x);
+
+			//slider
+			control_container.insert("p")
+			    .attr("align", "center")
+			    .attr("id", "slidertitle-"+i)
+			    .text("Bandwidth");
+
+			control_container.insert("svg")
+			    .attr("width", wsvg)
+			    .attr("height", hslider)
+			    .attr("id", "slider-"+i)
+			    .append("g")
+			    .attr("transform", "translate("+(wsvg-wslider)/2+",10)")
+			    .call(d3
+				  .sliderBottom()
+				  .min(min_slider)
+				  .max(max_slider)
+				  .width(wslider)
+				  .ticks(5, "s")
+				  .default(vslider)
+				  .fill("red")
+				  .on("onchange", (value) =>
+				      {if (value > 0) { vslider=value; update_kde(vslider);}}));
+		    }; // end else
+		}; // end function
+	    }; //end else (available kde data)
+	}); //end function // end each
+    }; //end if
+
+
+
+function plot_summarize_bar_graph(container, inputs) {
+
+    const hbar = d3.min([60*inputs.series.length, hsvg]);
+    const innerHbar = hbar - marginbar.top - marginbar.bottom;
+
+    const xb = d3.scaleLinear()
+	  .range([0, innerWbar])
+	  .domain([0, d3.max(inputs.series, serie => serie.result.estimate)])
+	  .nice();
+    const yb = d3.scaleBand()
+	  .range([0, innerHbar])
+	  .padding(0.2)
+	  .domain(inputs.series.map(serie => serie.name));
+    const xbAxis = d3.axisBottom()
+	  .scale(xb)
+	  .ticks(8, "s");
+    const ybAxis = d3.axisLeft()
+	  .scale(yb);
+
+    const bargraph =
+	container.append("svg")
+	.attr("width", wbar)
+	.attr("height", hbar);
+
+    // background
+    bargraph.append("rect")
+  	.attr("x", marginbar.left)
+  	.attr("y", marginbar.top)
+  	.attr("width", innerWbar)
+  	.attr("height", innerHbar)
+  	.attr("class", "background axis");
+    // x Axis
+    bargraph.append("g")
+	.attr("transform","translate("+marginbar.left+","+(hbar-marginbar.bottom)+")")
+	.attr("class", "axis")
+	.call(xbAxis);
+    // x axis title
+    bargraph.append("text")
+	.attr("class", "axisTitle")
+	.attr("x", wbar/2)
+	.attr("y", hbar-10)
+	.text("Estimated "+inputs.yLabel);
+    // y Axis
+    bargraph.append("g")
+	.attr("transform","translate("+marginbar.left+","+marginbar.bottom+")")
+	.attr("class", "axis")
+	.call(ybAxis);
+
+    // Bargraph
+    bargraph.append("g")
+	.attr("transform","translate("+marginbar.left+","+marginbar.top+")")
+	.selectAll(".bar")
+   	.data(inputs.series)
+	.enter()
+	.append("rect")
+	.attr("class", "bar")
+	.attr("y", serie => yb(serie.name))
+	.attr("height", yb.bandwidth)
+	.attr("x", serie => 0)
+	.attr("width", serie => xb(serie.result.estimate))
+	.attr("fill", "#4ECDC4")
+	.on("mouseover", function (serie) {
+	    // Specify where to put label of text
+	    bargraph.append("text")
+		.attr("class", "axisTitle")
+		.attr("id", "tt")
+		.attr("x", wbar-200)
+		.attr("y", marginbar.top-10)
+		.text("Value: "+d3.format(".4s")(serie.result.estimate));
+	})
+        .on("mouseout", function (serie) {
+	    // Select text by id and then remove
+	    d3.selectAll("#tt").transition().duration("50").remove();
+	});
+
+};
+
+// [histrogram (data, barwidth, min, max)] computes histogram
+// values as follows:
+// - a value [v] of [data] contributes to the bar between [u] and
+// [u+barwidth] if u <= v < u+barwidth
+// - the [i]th bar is between [min+i*barwidth] and [min+(i+1)*barwidth]
+// - [max] is used only to determine the number of bars. It MUST be greater
+// than [d3.max(data)]
+function histogram(data, barwidth, min, max) {
+    const nbar = Math.floor((max-min)/barwidth)+1;
+    let hist = new Array(nbar);
+    for (let i=0; i<nbar; i++) {
+	hist[i]=0;
+    }
+
+    data.forEach(function(v) {
+	const ind = Math.floor((v-min)/barwidth);
+	hist[ind] ++;
+    });
+
+    let n = data.length;
+    for (let i=0; i<nbar; i++) {
+	hist[i] = hist[i];
+    }
+
+    return hist;
+}
+
+// [plot_histogram(container, data, bandwidth, xscale, yscale)]
+// draws the histogram computes with
+// [histogram(data, barwidth, d3.min(data), d3.max(data)]
+// in the html element [container].
+//
+// Axis are already defined on [container], using [xscale] and [yscale].
+//
+// In addition, this function returns the update function
+// that redraw the bar if called with a new barwidth.
+function plot_histogram(container, data, barwidth, xscale, yscale) {
+    const min = d3.min(data),
+	  max = d3.max(data);
+    const hist = histogram(data, barwidth, min, max);
+    const sample_nb = data.length;
+
+    const print_value = function (v) {
+	container.append("text")
+	    .attr("class", "axisTitle")
+	    .attr("id", "tt2")
+	    .attr("x", wsvg-170)
+	    .attr("y", 20)
+	    .text("Value: "+d3.format("d")(v)+" / "+d3.format("d")(sample_nb));};
+
+    const rects = container
+	  .selectAll(".bar")
+   	  .data(hist)
+	  .enter();
+
+    rects.append("rect")
+	.attr("class", "bar")
+	.attr("x", (v, i) => xscale(i*barwidth+min))
+	.attr("width", (v, i) => xscale(barwidth)-xscale(0))
+	.attr("y", (v, i) => yscale(v))
+	.attr("height", (v, i) => innerH-yscale(v))
+	.on("mouseover", print_value)
+        .on("mouseout", () => d3.selectAll("#tt2").transition().duration("50").remove());
+
+    function update_hist(nbarwidth) {
+	//compute new histograph values
+	const nhist = histogram(data, nbarwidth, min, max);
+
+	const rects = container
+	      .selectAll(".bar")
+   	      .data(nhist);
+
+	rects.exit().remove();
+
+	rects.enter().append("rect").attr("class", "bar")
+	    .merge(rects)
+	    .attr("x", (v, i) => xscale(i*nbarwidth+min))
+	    .attr("width", (v, i) => xscale(nbarwidth)-xscale(0))
+	    .attr("y", (v, i) => yscale(v))
+	    .attr("height", (v, i) => innerH-yscale(v))
+	    .on("mouseover", print_value)
+            .on("mouseout", () => d3.selectAll("#tt2").transition().duration("50").remove());
+    }
+    return update_hist;
+};
+
+// [kernelDensityEstimation(data, bandwith] returns the function x -> kde(x)
+//    for [data]. The kernel function used is a gaussian.
+function kernelDensityEstimation(X, bandwidth) {
+    //gaussian constante
+    const a = 1/(2*bandwidth*bandwidth);
+    const b = bandwidth * SQRT_2PI;
+    const gaussianKernel =
+	  function (x) {
+	      return Math.exp(-a * x * x) / b;
+	  };
+
+    return function (x) {
+        let i = 0;
+        let sum = 0;
+        for (i = 0; i < X.length; i++) {
+	    sum += gaussianKernel(x - X[i])/X.length;
+        }
+	return sum ;
+    };
+}
+
+// [plot_kde(container, data, bandwidth, xscale, yscale, x)] draws
+// the kde function computes with [kde(data, bandwidth)]
+// for the abscisse values defined by [x], in the html element
+// [container].
+//
+// Axis are already defined on [container], using [xscale] and
+// [yscale].
+//
+// In addition, this function returns the update function that
+// redraw the curve if called with a new bandwidth.
+function plot_kde(container, data, bandwidth, xscale, yscale, x) {
+    const n = x.length;
+    const kde = kernelDensityEstimation(data, bandwidth);
+    const density = new Array(n);
+
+    for (let i=0; i<n;i++){
+	let tmp = x[i] ;
+	density[i] = [tmp, kde(tmp)];
+    }
+
+    const graph = container
+	  .append('g')
+	  .append("path")
+	  .attr("class", "mypath")
+	  .datum(density)
+	  .attr("fill", "#4ECDC4")
+	  .attr("opacity", ".8")
+	  .attr("stroke", "#292F36")
+	  .attr("stroke-width", 1)
+	  .attr("stroke-linejoin", "round")
+	  .attr("d",
+		d3.line()
+		.curve(d3.curveBasis)
+		.x(d => xscale(d[0]))
+		.y(d => yscale(d[1])));
+
+    function update_kde(nbandwidth) {
+	let kde = kernelDensityEstimation(data, nbandwidth);
+
+	for (let i=0; i<n;i++){
+	    density[i][1] = kde(density[i][0]);
+	}
+
+	graph.datum(density)
+	    .transition()
+	    .duration(50)
+	    .attr("d",
+		  d3.line()
+		  .curve(d3.curveBasis)
+		  .x(d => xscale(d[0]))
+		  .y(d => yscale(d[1])));
+    };
+
+    return update_kde;
+};
+
+};
+
+
+var contents = null;
+contents = {"xLabel":"run","yLabel":"monotonic-clock","series":[{"name":"add/ewah","description":{"start":1,"sampling":1.01,"stabilize":true,"quota":500000000,"limit":2000,"instances":["minor-allocated","major-allocated","monotonic-clock"],"samples":143,"time":550970461},"dataset":[{"x":1,"y":54601},{"x":2,"y":94442},{"x":3,"y":145487},{"x":4,"y":193032},{"x":5,"y":221234},{"x":6,"y":280034},{"x":7,"y":307425},{"x":8,"y":351953},{"x":9,"y":426404},{"x":10,"y":545760},{"x":11,"y":492955},{"x":12,"y":525294},{"x":13,"y":581648},{"x":14,"y":720627},{"x":15,"y":679366},{"x":16,"y":734631},{"x":17,"y":768161},{"x":18,"y":802517},{"x":19,"y":844383},{"x":20,"y":1059953},{"x":21,"y":1362071},{"x":22,"y":1004621},{"x":23,"y":1068641},{"x":24,"y":1093811},{"x":25,"y":1241037},{"x":26,"y":1187235},{"x":27,"y":1200439},{"x":28,"y":1276012},{"x":29,"y":1306349},{"x":30,"y":1371183},{"x":31,"y":1392975},{"x":32,"y":1458452},{"x":33,"y":1706690},{"x":34,"y":1552448},{"x":35,"y":1574859},{"x":36,"y":1723204},{"x":37,"y":1931062},{"x":38,"y":1788073},{"x":39,"y":1717802},{"x":40,"y":1914074},{"x":41,"y":1859624},{"x":42,"y":2004003},{"x":43,"y":2045123},{"x":44,"y":2005779},{"x":45,"y":2027452},{"x":46,"y":2217504},{"x":47,"y":2130301},{"x":48,"y":2161670},{"x":49,"y":2172912},{"x":50,"y":2394065},{"x":51,"y":2347969},{"x":52,"y":2340288},{"x":53,"y":2690398},{"x":54,"y":2409799},{"x":55,"y":2500369},{"x":56,"y":2516805},{"x":57,"y":2689326},{"x":58,"y":2687883},{"x":59,"y":2924894},{"x":60,"y":2664220},{"x":61,"y":2749482},{"x":62,"y":3408357},{"x":63,"y":3133299},{"x":64,"y":2875249},{"x":65,"y":3234180},{"x":66,"y":3061898},{"x":67,"y":3032515},{"x":68,"y":3203045},{"x":69,"y":3191508},{"x":70,"y":3319273},{"x":71,"y":3182167},{"x":72,"y":3233050},{"x":73,"y":3535326},{"x":74,"y":3500957},{"x":75,"y":4340599},{"x":76,"y":3394368},{"x":77,"y":3424709},{"x":78,"y":3987329},{"x":79,"y":3779073},{"x":80,"y":3681225},{"x":81,"y":3709025},{"x":82,"y":3960879},{"x":83,"y":3922655},{"x":84,"y":4105662},{"x":85,"y":4229541},{"x":86,"y":4413521},{"x":87,"y":4175165},{"x":88,"y":4080656},{"x":89,"y":4052646},{"x":90,"y":4183575},{"x":91,"y":4264088},{"x":92,"y":4534356},{"x":93,"y":4228347},{"x":94,"y":4459176},{"x":95,"y":4361656},{"x":96,"y":4355330},{"x":97,"y":4397958},{"x":98,"y":4671999},{"x":99,"y":4728227},{"x":100,"y":4501372},{"x":101,"y":4612803},{"x":102,"y":5181304},{"x":103,"y":4826574},{"x":104,"y":4696923},{"x":105,"y":4979907},{"x":106,"y":5010729},{"x":107,"y":4833901},{"x":108,"y":5065220},{"x":109,"y":5313108},{"x":110,"y":5006560},{"x":111,"y":5203214},{"x":112,"y":5287545},{"x":113,"y":5458538},{"x":114,"y":5129997},{"x":115,"y":5493094},{"x":116,"y":5439681},{"x":117,"y":5218196},{"x":118,"y":5721594},{"x":119,"y":5512113},{"x":120,"y":5387600},{"x":121,"y":5695476},{"x":122,"y":5582436},{"x":123,"y":5552555},{"x":124,"y":5970233},{"x":125,"y":6005009},{"x":126,"y":5919797},{"x":127,"y":17624976},{"x":128,"y":6434880},{"x":129,"y":6040946},{"x":130,"y":6066862},{"x":131,"y":6756830},{"x":132,"y":7541798},{"x":133,"y":7243469},{"x":134,"y":7881699},{"x":135,"y":6499244},{"x":136,"y":6236495},{"x":137,"y":6833913},{"x":138,"y":6609754},{"x":139,"y":6352902},{"x":140,"y":6709186},{"x":141,"y":6583901},{"x":142,"y":7412943},{"x":143,"y":7651488}],"kde":[44300,44251,44049,44023,44051,44067,44081,44048,44034,43985,44039,44168,43894,44132,43986,44021,57590,43801,44121,43891,43957,44261,43934,43978,43920,49351,43971,44020,44129,44165,43955,44036,44167,44484,44090,43912,44131,44072,56353,43727,44103,43696,44025,43919,44079,43997,43897,43900,43991,93043,44154,44134,44300,49648,44174,44376,44283,47321,56238,43899,44067,43963,44022,43958,43932,44023,44147,44057,43918,64565,43672,43574,43908,43915,44013,43860,43999,43971,43913,63164,43996,43763,44612,43950,44143,43772,43932,43859,43977,47494,43778,44041,44006,43929,44118,44122,44067,44127,43944,44155,43983,55728,43786,43998,43762,43900,43863,43935,43906,46539,43925,44077,43863,44064,43806,43981,44159,43814,44209,43983,43878,47210,43783,63327,44052,43822,43802,44087,44581,44013,43884,47331,44464,51817,58798,45076,49976,52609,53547,54453,63631,124196,56908,48142,52638,47193,49425,51652,44196,112987,45187,44931,44828,44665,76124,48114,57869,44976,44527,112414,48676,50821,56439,44226,54053,57854,44176,44037,44238,48150,48034,44122,52255,44100,44204,44023,44091,44504,72714,44423,44147,44347,44135,44009,44307,43959,54160,43872,43956,44156,43913,43984,43926,43782,44401,44057,44252,44177,44066,62573,44168,44322,44354,44312,44290,44314,44318,44356,44361,64740,44065,44105,44028,43833,43914,43837,43876,44140,49634,55700,44087,47160,48825,44297,43902,44306,44141,44035,44205,44203,44212,44224,63983,44210,44255,44229,44237,44271,44191,44255,69857,44196,44368,44055,44152,44253,44085,44527,44218,44363,44387,46938,44024,44207,44188,44168,44053,44245,44055,44128,44145,44158,65219,59907,46541,46255,44451,44220,44085,44187,54731,43825,65998,43957,43869,44041,44042,44952,44105,44138,45484,44133,57123,53426,51670,50050,44354,49871,44339,44240,43962,46125,44117,44031,44136,43985,44320,44068,44022,44014,44103,44180,44085,59045,43902,43798,43780,43784,43965,43771,43901,44022,44110,44218,65436,47649,45847,43789,43867,43702,43919,43732,43733,44054,69719,44214,43940,43965,44132,44027,44839,44065,44077,44443,44042,44615,44134,43908,44026,44074,44126,44086,44110,44052,44057,57196,43965,48053,44179,44204,44136,44241,44327,44147,44058,44261,44159,44357,44045,44267,44153,44059,44164,44652,46075,43810,44099,56351,44084,47427,54524,56885,44009,43924,43711,43811,43721,43776,43952,43993,48513,44180,44021,44065,44288,44023,44120,44066,60141,43905,43640,44294,44027,44041,44045,44172,44164,43973,44133,44155,75033,44144,43936,44500,44137,44060,44150,44207,44021,72525,44155,43931,46916,43916,43986,43987,43898,43851,44115,60888,44123,44151,44106,44191,44058,44554,44256,44220,47100,64199,45131,44221,44084,44232,44249,44122,44141,44073,45900,44032,44117,44179,44220,44410,47916,44729,43851,44297,43797,43853,43794,70772,53060,43774,43884,43992,44047,44154,44089,44165,43951,44001,44118,43917,44199,43985,44076,44059,44003,44277,44126,44021,73660,53080,44548,43832,48281,44066,44185,44264,44103,45421,51496,56086,54825,104086,47705,45810,59162,57770,109247,51630,51713,44613,44225,55022,61245,59918,55577,89105,44552,44281,44146,44215,44106,44056,43974,44055,76211,67522,44300,47848,55903,49695,44526,44877,44453,50607,44836,44227,52180,43819,43902,45876,43955,44228,43872,66692,44047,44240,46063,44178,44248,44196,44094,45851,44337,68399,44486,44283,44381,51104,44207,44307,44443,44277,44408,44800,59460,44095,43988,44302,44494,44183,44382,44103,44302,44273,44233,44470,44303,44184,44322,44085,44333,62009,44010,43919,43879,79065,44078,43908,44494,162356,54443,54464,55216,55774,53047,58957,57612,44974,44479,44403,44311,44268,60649,44302,44446,44205,44218,44377,44287,45842,44201,44202,44311,44160,44279,44379,44186,44272,44153,44422,44272,48466,43762,59344,43923,49994,61362,54271,53946,61442,60002,55654,58109,55412,55147,58347,59120,59009,58965,110402,56379,56820,55116,55327,53372,55111,50542,44576,44667,44670,44559,44577,43975,44088,53055,44080,44063,44082,88613,47324,43957,44085,44071,44087,44038,44090,44393,44539,43983,44055,44154,63917,43891,44082,44081,44295,43986,44147,44197,77495,44164,43755,44034,43908,43735,43768,48032,45036,44201,43967,44148,44102,44075,44103,44183,44017,44171,44165,44180,44167,62269,50292,44989,44792,45028,44964,44932,44015,44071,44272,44121,44078,44142,44063,44284,43980,44195,44076,47813,44282,44118,68688,43795,43633,43671,43697,43747,43730,43880,43970,44056,43929,54258,44170,44140,44039,44399,44243,44347,44165,44271,44404,44322,54515,43923,44066,46874,43569,44082,44060,51251,43805,43873,81730,44294,44278,44092,44206,45740,44183,44255,44166,44157,56439,43870,45809,44011,44058,43857,44032,43990,44072,44164,44152,44023,44258,43955,44114,43897,44025,44087,44067,44184,47541,44059,74173,45140,44169,44073,44424,43986,43977,44077,44148,44055,44072,44055,44116,43976,79030,44115,44246,43979,44309,47060,72223,50236,43916,43889,43919,43682,43972,44054,43988,44275,48026,67632,44084,43979,43996,43915,44595,44561,44320,44212,44193,61830,43756,44206,43929,44006,43900,43926,43970,43955,44023,44057,43946,128789,44082,43937,45971,49297,54161,51348,74923,58611,57659,48720,43989,44542,63338,53430,44112,63450,44006,43870,43708,43736,43819,43929,44150,44169,43860,60968,55245,57367,60135,55953,54271,54605,54100,52548,50500,49829,55239,44533,44660,44807,63527,44899,56475,86814,55881,56040,54321,44359,44399,44256,44216,44175,44259,44112,44235,44018,44210,44108,46558,44163,44365,44430,44658,44381,92109,43934,43833,43955,43890,43913,44171,43847,43952,50143,43726,43841,43811,43925,44044,44021,44122,43934,44169,44013,92907,44071,43865,43866,43957,43769,47545,45629,43733,44041,44515,44027,44011,44052,43926,44279,44331,44487,43859,44011,44052,64435,43859,44025,43907,43968,43805,43971,43881,44105,44968,44277,44237,44149,44029,44131,44048,44161,44191,44305,44141,44117,56004,43960,44830,60695,47995,44892,56325,43990,45004,44271,52875,50220,44307,44301,44130,43746,43870,44040,43842,43932,43894,61338,43798,43702,44180,44104,44069,44128,44179,44085,46140,43935,44386,88407,44101,44097,54885,54560,48899,44063,44151,70637,43847,48311,47035,44044,44344,43927,44064,44084,43993],"result":{"estimate":49443.3145797292,"r_square":0.8203458048277527}},{"name":"add/set","description":{"start":1,"sampling":1.01,"stabilize":true,"quota":500000000,"limit":2000,"instances":["minor-allocated","major-allocated","monotonic-clock"],"samples":66,"time":757502881},"dataset":[{"x":1,"y":85913},{"x":2,"y":206578},{"x":3,"y":293134},{"x":4,"y":489224},{"x":5,"y":292560},{"x":6,"y":821517},{"x":7,"y":416459},{"x":8,"y":1986523},{"x":9,"y":706762},{"x":10,"y":651112},{"x":11,"y":756780},{"x":12,"y":6117734},{"x":13,"y":2917777},{"x":14,"y":891427},{"x":15,"y":1016426},{"x":16,"y":1079215},{"x":17,"y":11453874},{"x":18,"y":1045573},{"x":19,"y":1043989},{"x":20,"y":4120605},{"x":21,"y":1504808},{"x":22,"y":1485159},{"x":23,"y":18157986},{"x":24,"y":1619337},{"x":25,"y":10554745},{"x":26,"y":1744581},{"x":27,"y":1670530},{"x":28,"y":3328967},{"x":29,"y":2061776},{"x":30,"y":5285423},{"x":31,"y":1972193},{"x":32,"y":3717142},{"x":33,"y":54061783},{"x":34,"y":2437209},{"x":35,"y":15056165},{"x":36,"y":2272493},{"x":37,"y":3487816},{"x":38,"y":6124033},{"x":39,"y":2405048},{"x":40,"y":4240864},{"x":41,"y":2542877},{"x":42,"y":6145379},{"x":43,"y":4289159},{"x":44,"y":3026532},{"x":45,"y":5791003},{"x":46,"y":18836582},{"x":47,"y":105387207},{"x":48,"y":5766202},{"x":49,"y":8760268},{"x":50,"y":4808324},{"x":51,"y":3183301},{"x":52,"y":9275950},{"x":53,"y":4764136},{"x":54,"y":14783275},{"x":55,"y":5152247},{"x":56,"y":3262567},{"x":57,"y":9539132},{"x":58,"y":4950065},{"x":59,"y":6848948},{"x":60,"y":5198782},{"x":61,"y":6934031},{"x":62,"y":5341912},{"x":63,"y":9286397},{"x":64,"y":5504417},{"x":65,"y":6918155},{"x":66,"y":190254578}],"kde":[55251,55132,54499,57657,54748,82494,60397,65409,75371,66086,61186,75267,80305,88630,67869,54469,59681,54359,55115,126628,59953,58098,57157,59655,3129396,59083,56084,55980,84765,56873,55350,71378,56218,54936,54712,55947,55056,54895,55311,54731,55621,56437,54957,54850,54422,54995,69260,74146,115542,55452,58749,54521,53943,54431,56543,54091,54155,54176,56778,54101,53885,54328,57899,54793,116375,88405,75550,76161,81092,81253,78805,79867,73573,78455,73780,74190,109885,72835,69801,70501,68695,75349,60705,55638,54869,55673,57117,55243,55326,54935,1633006,61366,55141,55047,58866,54697,54803,95353,62783,55298,54791,56609,55208,55169,55231,57889,55637,56015,55186,56102,55850,55304,55849,57613,72287,55487,55053,56680,54888,54912,55179,57004,54672,55121,55174,56706,55422,55156,55014,56481,56113,66727,55713,58661,54860,54400,54953,58075,54573,54714,55144,57438,54689,54910,54953,79455,58549,54666,80184,55621,55333,54918,57433,54557,54620,55151,85388,3118359,82931,60261,57466,128957,56630,56627,55156,56740,56963,56140,54551,54390,65434,76382,55409,54886,55917,56102,55017,95027,67639,66943,79213,57169,55544,56558,63692,58885,66434,55079,54918,56840,55441,54865,55041,88799,55704,54569,57867,55577,55147,55060,56208,56012,55244,54794,57428,55814,56179,54924,57415,55735,69152,55973,58912,55020,55500,55120,57888,55522,55288,55019,83144,55199,55077,1557138,56921,57460,54941,55073,54470,55981,54483,54526,54404,56243,99260,72553,73834,58703,59028,67350,58129,68961,55118,55235,54187,55149,54523,54931,58264,54713,73972,57385,54833,54406,54775,57093,54894,54892,194552,55313,54694,56598,54490,55321,77606,55020,64640,65162,57837,82313,64138,55774,92050,55530,55929,56292,54965,55247,55518,130201,60485,59419,54990,54522,55123,58480,55516,54900,54925,3321038,142347,78743,72123,70943,74113,79657,74876,65136,74844,80595,80625,100235,77640,72981,73733,78874,66825,56054,80591,85199,82334,89999,84298,110211,82795,81456,78998,75179,81249,68613,60087,56417,57114,54987,58951,74766,68189,105125,89661,61390,71360,81739,83240,231687,82587,92049,79105,360972,58099,56458,58568,55567,54786,55025,55393,54379,54758,54176,56229,85472,75508,69499,58938,73029,80765,103870,1537574,57009,56036,56418,54304,54536,54564,78207,54868,55001,55187,58815,54422,54951,54289,104118,56025,54585,62907,54524,54719,54385,57231,54830,54180,54271,64345,74554,82951,65918,55225,76888,55200,54884,55349,54815,55123,58306,55138,55078,55481,56800,55260,55187,54907,56509,55085,54976,95855,73269,75403,76741,76396,80222,86647,59047,56458,56021,55809,55678,55180,54916,134208,65763,58673,63724,1824250,64684,64124,60682,60365,60351,60200,59079,59325,59919,62003,58531,58364,58336,72325,59743,58786,61183,58132,58394,58354,58570,80072,59411,59993,58728,62910,58713,60674,75025,60055,59870,60025,58807,59282,60039,59319,58722,58840,60530,59117,59807,58890,66999,59080,79061,59936,58582,58592,58523,60938,59331,58792,58748,60484,58534,58445,62230,58696,58782,58781,93871,59929,59733,59737,59255,5670970,67855,69909,64676,63260,63550,67847,62469,60362,71336,98193,60924,66958,73186,64359,62497,62107,62083,61935,61648,61855,86045,96057,62312,61175,64653,60039,62866,99696,60432,62868,60726,62319,59665,61118,60968,60998,61095,61201,62507,67732,61420,61490,80081,60466,63295,60996,61723,61158,62378,62175,62281,61567,63752,60783,61600,62209,62182,104501,90664,87314,88470,79274,77122,83476,73791,62785,1742326,63311,66972,65348,62606,63015,61091,65156,78884,62539,63279,61869,60888,61046,62169,61267,60992,62934,63756,62974,61728,63921,62778,83260,64066,60922,64053,59169,63654,61033,60588,61474,61746,62328,63590,61979,86079,62416,77171,63301,63365,58743,62628,61498,62501,61769,84214,63517,60083,62197,61131,66213,61189,72821,64655,60421,61602,60635,64526,60155,63649,64311,61021,61361,60755,62296,8862497,64211,80514,73814,78060,80044,79924,88742,79863,74867,59823,61199,60625,59016,59979,58454,93456,79152,79670,81208,80037,85908,115256,62827,61657,59393,61904,59150,60697,101887,68683,61609,59058,81739,71709,70558,74828,93239,78251,63369,61465,59698,79541,62851,59576,61656,59004,59098,59755,61836,60718,61053,63638,59197,62264,59527,63164,72730,62636,60626,60552,61154,59625,60380,59515,61350,1572911,60828,61310,59967,61906,60179,62182,60674,59185,63021,59078,60615,59007,61059,89257,59587,60300,58882,60981,58792,60286,59139,61016,58668,60126,58749,62378,60216,59632,60072,71060,64748,59530,65076,58979,60919,59913,60244,60457,59273,61577,59581,62768,59194,60438,59802,88745,63201,58810,60888,59346,62016,58920,60714,85464,58992,60209,58715,59395,57978,60965,81293,75188,62727,59183,61273,61003,5635296,62637,62921,59380,58827,59247,113244,78304,81485,79248,78133,134497,63342,61683,60472,60532,59736,59323,64494,59250,58740,60052,59374,58832,59377,60530,113766,75153,63105,59126,59517,75528,59220,59676,105114,59809,59241,58962,61935,58601,59154,198306,61599,69734,59472,58863,62065,59956,59499,59253,62743,60638,58813,59086,60472,75805,59809,59501,58675,58759,59371,60273,58707,58615,58435,61442,1529417,64763,59908,59284,61359,87082,60065,58761,64529,59665,59458,63395,78112,59380,59648,59916,59300,59140,61335,59248,59192,59020,60203,59372,58953,59159,59875,59133,71569,60320,61753,59195,59460,61328,59182,60593,58994,60842,59788,59485,59156,60549,59761,59219,84581,59860,59040,59946,62502,59073,60777,62933,60379,59679,59748,61043,58761,58483,58583,62038,70493,60198,61296,58914,96054,59476,8369561,121057,97032,81314,78875,90913,85826,78520,79693,63513,60469,61785,59957,87085,61172,59604,59495,59664,62020,59208,58964,59115,60261,58651,62534,59389,60744,69918,101347,61016,59282,59396,60715,59588,59535,59344,62711,58982,59643,59383,62253,59218,59435,59761,85875,59852,59336,60506,59349,59494,60486,62670,91605,60349,60947,59263,59210,60095,59049,59379,101908,60041,59385,59156,60378,59195,59251,1610293,60757,59624,58920,58119,60395,58779,58614,58091,60231,58330,58300,58676,58898,58215,71693,61862,58848,60571,59605,60191,59394,58644,84377,59150,58994,58996,60716,59216,58713,59058,60648,59263,59231,60472,59804,59712,59146,61504,59293,59194,60503,76368,59777,59622,71474,59939],"result":{"estimate":317305.2086083595,"r_square":0.08033753765571416}}]}
+
+
+if (contents == null)
+    d3.json("outputs.json", render);
+else
+    render(contents);
+}
+
+  </script>
+
+</body>
+</html>
