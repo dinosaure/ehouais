@@ -37,8 +37,8 @@ let max_length =
 module Set = Hashset.Make(struct type t = int let equal a b = (compare : int -> int -> int) a b = 0 let hash x = x end)
 
 let add_in_ewah tbl =
-  let ewah = Ewah.make ~allocator:Ewah.allocator in
   Staged.stage @@ fun () ->
+    let ewah = Ewah.make ~allocator:Ewah.allocator in
     let pos = ref 0 in
     Hashtbl.iter
       (fun _ -> function
@@ -47,8 +47,8 @@ let add_in_ewah tbl =
       tbl
 
 let add_in_hashset tbl =
-  let set = Set.create 32 (* XXX(dinosaure): [ewah] starts with [32]. *) in
   Staged.stage @@ fun () ->
+    let set = Set.create 32 (* XXX(dinosaure): [ewah] starts with [32]. *) in
     let pos = ref 0 in
     Hashtbl.iter
       (fun _ -> function
@@ -57,8 +57,8 @@ let add_in_hashset tbl =
       tbl
 
 let add_in_bitv tbl =
-  let set = Bitv.create max_length false in
   Staged.stage @@ fun () ->
+    let set = Bitv.create max_length false in
     let pos = ref 0 in
     Hashtbl.iter
       (fun _ -> function
