@@ -26,12 +26,20 @@ let tbl =
   let tbl = Hashtbl.create 32 in
   populate tbl 1_000 ; tbl
 
+let max_length =
+  let pos = ref 0 in
+  let res = ref 0 in
+  Hashtbl.iter (fun _ -> function
+      | true -> res := max !res !pos ; incr pos
+      | false -> incr pos) tbl ;
+  succ !res
+
 module Set = Hashset.Make(struct type t = int let equal a b = (compare : int -> int -> int) a b = 0 let hash x = x end)
 
 let add_in_ewah tbl =
   let ewah = Ewah.make ~allocator:Ewah.allocator in
-  let pos = ref 0 in
   Staged.stage @@ fun () ->
+    let pos = ref 0 in
     Hashtbl.iter
       (fun _ -> function
          | true -> ignore @@ Ewah.set ewah !pos ; incr pos
@@ -40,8 +48,8 @@ let add_in_ewah tbl =
 
 let add_in_hashset tbl =
   let set = Set.create 32 (* XXX(dinosaure): [ewah] starts with [32]. *) in
-  let pos = ref 0 in
   Staged.stage @@ fun () ->
+    let pos = ref 0 in
     Hashtbl.iter
       (fun _ -> function
          | true -> Set.add set !pos ; incr pos
@@ -49,9 +57,9 @@ let add_in_hashset tbl =
       tbl
 
 let add_in_bitv tbl =
-  let set = Bitv.create 32 false in
-  let pos = ref 0 in
+  let set = Bitv.create max_length false in
   Staged.stage @@ fun () ->
+    let pos = ref 0 in
     Hashtbl.iter
       (fun _ -> function
          | true -> Bitv.set set !pos true ; incr pos
