@@ -1,3 +1,16 @@
 (executable
  (name bench)
- (libraries digestif.c core_bench fmt ewah))
+ (libraries digestif.c bechamel bechamel-notty notty.unix bechamel-js fmt bitv ewah))
+
+(rule
+ (targets add.json)
+ (action
+  (with-stdout-to
+   %{targets}
+   (run ./bench.exe json))))
+
+(rule
+ (targets add.html)
+ (mode promote)
+ (action
+  (system "%{bin:bechamel-html} < %{dep:add.json} > %{targets}")))
