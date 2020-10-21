@@ -28,6 +28,7 @@ let ewah_fold ewah f a =
   let a = ref a in
   Ewah.each_bit ewah (fun x -> a := f x !a) ; !a
 
+(*
 let xor a b =
   Set.(diff (union a b) (inter a b))
 
@@ -47,6 +48,7 @@ let test_xor a b =
   let len = ewah_fold ewah_o (fun _ acc -> succ acc) 0 in
   Alcotest.(check bool) "xor" res true ;
   Alcotest.(check int) "len" (Set.cardinal o) len
+*)
 
 let singleton x =
   let ewah = Ewah.make ~allocator:Ewah.allocator in
@@ -77,11 +79,13 @@ let xor_operation =
 
 let set_of_list lst = List.fold_right Set.add lst Set.empty
 
+(*
 let xor_operation =
   List.map (fun (a, b) -> test_xor (set_of_list a) (set_of_list b)) xor_operation
+*)
 
 let () =
   Alcotest.run "ewah"
     [ "set", set_operation ()
     ; "empty", empty_operation
-    ; "xor", xor_operation ]
+    (* ; "xor", xor_operation *) ]

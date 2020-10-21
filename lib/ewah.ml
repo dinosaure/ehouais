@@ -1,5 +1,7 @@
-type buf = (int, Bigarray.int_elt, Bigarray.c_layout) Bigarray.Array1.t
-type rlw = (int, Bigarray.int_elt, Bigarray.c_layout) Bigarray.Array0.t
+[@@@warning "-32"]
+
+type buf = Ropes.t
+type rlw = int
 
 let _bits_in_word = Sys.word_size - 1 (* GC bit *)
 let _size_of_word = Sys.word_size / 8
@@ -20,45 +22,45 @@ module RLW = struct
   let _rlw_largest_running_count_shift = _rlw_largest_running_count lsl 1 (* 0x1FFFFFFFE *)
   let _rlw_running_len_plus_bit = (1 lsl (_rlw_running_bits + 1)) - 1 (* 0x1FFFFFFFF *)
 
-  let get : rlw -> int = fun arr -> Bigarray.Array0.get arr
-  let set : rlw -> int -> unit = fun arr v -> Bigarray.Array0.set arr v
+  let get : buf -> rlw -> int = fun arr rlw -> Ropes.get arr rlw
+  let set : buf -> rlw -> int -> unit = fun arr rlw v -> Ropes.set arr rlw v
 
-  let get_run_bit rlw =
-    (get rlw) land 1
+  let get_run_bit buf rlw =
+    (get buf rlw) land 1
   [@@inline]
 
-  let set_run_bit rlw bit =
-    let word = get rlw in
+  let set_run_bit buf rlw bit =
+    let word = get buf rlw in
     let word = if bit <> 0 then word land (lnot 1) else word lor 1 in
-    set rlw word
+    set buf rlw word
   [@@inline]
 
-  let set_running_len rlw len =
-    let word = get rlw in
+  let set_running_len buf rlw len =
+    let word = get buf rlw in
     let word = word lor _rlw_largest_running_count_shift in
     let word = word land ((len lsl 1) lor (lnot _rlw_largest_running_count_shift)) in
-    set rlw word
+    set buf rlw word
   [@@inline]
 
-  let get_running_len rlw =
-    let word = get rlw in
+  let get_running_len buf rlw =
+    let word = get buf rlw in
     (word lsr 1) land _rlw_largest_running_count
   [@@inline]
 
-  let get_literal_words rlw =
-    let word = get rlw in
+  let get_literal_words buf rlw =
+    let word = get buf rlw in
     word lsr (1 + _rlw_running_bits)
   [@@inline]
 
-  let set_literal_words rlw len =
-    let word = get rlw in
+  let set_literal_words buf rlw len =
+    let word = get buf rlw in
     let word = word lor (lnot _rlw_running_len_plus_bit) in
     let word = word land ((len lsl (_rlw_running_bits + 1)) lor _rlw_running_len_plus_bit) in
-    set rlw word
+    set buf rlw word
   [@@inline]
 
-  let size rlw =
-    (get_running_len rlw) + (get_literal_words rlw)
+  let size buf rlw =
+    (get_running_len buf rlw) + (get_literal_words buf rlw)
   [@@inline]
 end
 
@@ -69,33 +71,25 @@ type t =
   ; mutable bit_size : int
   ; mutable rlw : rlw }
 
-external ptr_diff : rlw -> buf -> int = "ewah_ptr_diff" [@@noalloc]
+let reallocator : buf -> int -> buf = fun old size ->
+  let diff = size - Ropes.length old in
+  Ropes.append old (Ropes.of_array (Array.make diff 0))
+let allocator : int -> buf = fun size -> Ropes.of_array (Array.make size 0)
 
-let slice : buf -> int -> rlw = fun buf off ->
-  Bigarray.Array1.slice buf off [@@inline]
+let set : buf -> int -> int -> unit = fun arr off v -> Ropes.set arr off v
+let get : buf -> int -> int = fun arr off -> Ropes.get arr off
 
-let reallocator : buf -> int -> buf = fun _ size ->
-  Bigarray.Array1.create Bigarray.Int Bigarray.c_layout size [@@inline]
+let blit src src_off dst dst_off len = Array.blit src src_off dst dst_off len
 
-let allocator : int -> buf = fun size ->
-  Bigarray.Array1.create Bigarray.Int Bigarray.c_layout size [@@inline]
-
-external set : buf -> int -> int -> unit = "%caml_ba_unsafe_set_1"
-external get : buf -> int -> int = "%caml_ba_unsafe_ref_1"
-
-let blit src src_off dst dst_off len =
-  let a = Bigarray.Array1.sub src src_off len in
-  let b = Bigarray.Array1.sub dst dst_off len in
-  Bigarray.Array1.blit a b
-[@@inline]
+let slice _buf off = off
 
 let buffer_grow t new_size =
-  if t.alloc_size >= new_size then Fmt.invalid_arg "Ewah.buffer_grow: invalid new size." ;
-  let rlw_offset = ptr_diff t.rlw t.buffer in
-  let offset = rlw_offset / _size_of_word in
-  t.alloc_size <- new_size ;
-  t.buffer <- reallocator t.buffer new_size ;
-  t.rlw <- slice t.buffer offset
+  if t.alloc_size < new_size
+  then ( let rlw_offset = t.rlw * _size_of_word in
+         let offset = rlw_offset / _size_of_word in
+         t.alloc_size <- new_size
+       ; t.buffer <- reallocator t.buffer new_size
+       ; t.rlw <- slice t.buffer offset )
 [@@inline]
 
 let buffer_push t value =
@@ -115,65 +109,63 @@ let clear t =
   t.bit_size <- 0 ;
   t.rlw <- slice t.buffer 0
 
-let add_empty_words t v n =
-  if RLW.get_run_bit t.rlw != v
-  && RLW.size t.rlw == 0
-  then RLW.set_run_bit t.rlw v
-  else if RLW.get_literal_words t.rlw != 0
-          || RLW.get_run_bit t.rlw != v
+let add_empty_words t v number =
+  if RLW.get_run_bit t.buffer t.rlw <> v && RLW.size t.buffer t.rlw = 0
+  then RLW.set_run_bit t.buffer t.rlw v
+  else if RLW.get_literal_words t.buffer t.rlw <> 0
+          || RLW.get_run_bit t.buffer t.rlw <> v
   then begin
     buffer_push_rlw t 0 ;
-    if v != 0 then RLW.set_run_bit t.rlw v
+    if v <> 0 then RLW.set_run_bit t.buffer t.rlw v
   end ;
 
-  let runlen = RLW.get_running_len t.rlw in
-  let can_add = min_word n (RLW._rlw_largest_running_count - runlen) in
+  let runlen = RLW.get_running_len t.buffer t.rlw in
+  let can_add = min_word number (RLW._rlw_largest_running_count - runlen) in
 
-  RLW.set_running_len t.rlw (runlen + can_add) ;
-  let number = ref (n - can_add) in
+  RLW.set_running_len t.buffer t.rlw (runlen + can_add) ;
+  let number = ref (number - can_add) in
 
   while !number >= RLW._rlw_largest_running_count
   do
     buffer_push_rlw t 0 ;
     (* XXX(dinosaure): test_and_set? *)
-    if v != 0 then RLW.set_run_bit t.rlw v ;
-    RLW.set_running_len t.rlw RLW._rlw_largest_running_count ;
-    number := !number - RLW._rlw_largest_literal_count ;
+    if v <> 0 then RLW.set_run_bit t.buffer t.rlw v ;
+    RLW.set_running_len t.buffer t.rlw RLW._rlw_largest_running_count ;
+    number := !number - RLW._rlw_largest_running_count ;
   done ;
 
   if !number > 0
   then begin
     buffer_push_rlw t 0 ;
-    if v != 0 then RLW.set_run_bit t.rlw v ;
-    RLW.set_running_len t.rlw !number ;
+    if v != 0 then RLW.set_run_bit t.buffer t.rlw v ;
+    RLW.set_running_len t.buffer t.rlw !number ;
   end
 
 let add_literal t literal =
-  let current_num = RLW.get_literal_words t.rlw in
+  let current_num = RLW.get_literal_words t.buffer t.rlw in
 
   if current_num >= RLW._rlw_largest_literal_count
   then begin
     buffer_push_rlw t 0 ;
-    RLW.set_literal_words t.rlw 1 ;
+    RLW.set_literal_words t.buffer t.rlw 1 ;
     buffer_push t literal
   end else begin
-    RLW.set_literal_words t.rlw (current_num + 1) ;
+    RLW.set_literal_words t.buffer t.rlw (current_num + 1) ;
     (* assert (RLW.get_literal_words t.rlw == current_num + 1) ; *)
     buffer_push t literal
   end
 
-exception Break
-
+(*
 let add_dirty_words t buffer n negate =
     let number = ref n in
     let buffer_offset = ref 0 in
     let continue = ref true in
 
     while !continue do
-      let literals = RLW.get_literal_words t.rlw in
+      let literals = RLW.get_literal_words t.buffer t.rlw in
       let can_add = min_word n (RLW._rlw_largest_literal_count - literals) in
 
-      RLW.set_literal_words t.rlw (literals + can_add) ;
+      RLW.set_literal_words t.buffer t.rlw (literals + can_add) ;
 
       if t.buffer_size + can_add >= t.alloc_size
       then buffer_grow t ((t.buffer_size + can_add) * 3 / 2) ;
@@ -185,7 +177,7 @@ let add_dirty_words t buffer n negate =
           t.buffer_size <- t.buffer_size + 1
         done
       else begin
-        blit t.buffer t.buffer_size buffer !buffer_offset (can_add * _size_of_word) ;
+        Ropes.blit t.buffer t.buffer_size buffer !buffer_offset (can_add * _size_of_word) ;
         t.buffer_size <- t.buffer_size + can_add ;
       end ;
 
@@ -198,21 +190,22 @@ let add_dirty_words t buffer n negate =
         ; buffer_offset := !buffer_offset + can_add
         ; number := !number - can_add )
     done
+*)
 
 let add_empty_word t v =
-  let no_literal = RLW.get_literal_words t.rlw == 0 in
-  let run_len = RLW.get_running_len t.rlw in
+  let no_literal = RLW.get_literal_words t.buffer t.rlw = 0 in
+  let run_len = RLW.get_running_len t.buffer t.rlw in
 
   if no_literal && run_len == 0
   then begin
-    RLW.set_run_bit t.rlw v ;
+    RLW.set_run_bit t.buffer t.rlw v ;
     (* assert (RLW.get_run_bit t.rlw == v) ; *)
   end ;
 
-  if no_literal && RLW.get_run_bit t.rlw == v
+  if no_literal && RLW.get_run_bit t.buffer t.rlw = v
      && run_len < RLW._rlw_largest_running_count
   then begin
-    RLW.set_running_len t.rlw (run_len + 1)
+    RLW.set_running_len t.buffer t.rlw (run_len + 1)
     (* assert (RLW.get_running_len t.rlw == run_len + 1) *)
   end else begin
     buffer_push_rlw t 0 ;
@@ -221,10 +214,10 @@ let add_empty_word t v =
     (* assert (RLW.get_run_bit t.rlw == 0) ; *)
     (* assert (RLW.get_literal_words t.rlw == 0) ; *)
 
-    RLW.set_run_bit t.rlw v ;
+    RLW.set_run_bit t.buffer t.rlw v ;
     (* assert (RLW.get_run_bit t.rlw == v) ; *)
 
-    RLW.set_running_len t.rlw 1
+    RLW.set_running_len t.buffer t.rlw 1
     (* assert (RLW.get_running_len t.rlw == 1) ; *)
     (* assert (RLW.get_literal_words t.rlw == 0) *)
   end
@@ -248,16 +241,16 @@ let each_bit t f =
   do
     let word = slice t.buffer !pointer in
 
-    if RLW.get_run_bit word != 0
+    if RLW.get_run_bit t.buffer word != 0
     then
-      let len = RLW.get_running_len word * _bits_in_word in
+      let len = RLW.get_running_len t.buffer word * _bits_in_word in
       for _ = 0 to len - 1 do f !pos ; incr pos done
     else
-      pos := !pos + (RLW.get_running_len word * _bits_in_word) ;
+      pos := !pos + (RLW.get_running_len t.buffer word * _bits_in_word) ;
 
     incr pointer ;
 
-    let len = RLW.get_literal_words word in
+    let len = RLW.get_literal_words t.buffer word in
     for _ = 0 to len - 1 do
       for c = 0 to _bits_in_word - 1 do
         if get t.buffer !pointer land (1 lsl c) != 0
@@ -270,6 +263,7 @@ let each_bit t f =
     done
   done
 
+(*
 let pp =
   let iter f ewah = each_bit ewah f in
   Fmt.iter iter Fmt.int
@@ -283,9 +277,9 @@ module PRLW : sig
   (* XXX(dinosaure): to prove [const] assertion. *)
 
   val const : rlw -> rd_only
-  val get_literal_words : 'a rd t -> int
-  val get_running_len : 'a rd t -> int
-  val get_run_bit : 'a rd t -> int
+  val get_literal_words : buf -> 'a rd t -> int
+  val get_running_len : buf -> 'a rd t -> int
+  val get_run_bit : buf -> 'a rd t -> int
 end = struct
   type 'a rd = < rd: unit; .. > as 'a
   type 'a t = rlw
@@ -293,9 +287,9 @@ end = struct
   type rd_only = < rd: unit; > t
 
   external const : rlw -> rd_only = "%identity"
-  let get_literal_words : 'a rd t -> int = fun rlw -> RLW.get_literal_words rlw [@@inline]
-  let get_running_len : 'a rd t -> int = fun rlw -> RLW.get_running_len rlw [@@inline]
-  let get_run_bit : 'a rd t -> int = fun rlw -> RLW.get_run_bit rlw [@@inline]
+  let get_literal_words : buf -> 'a rd t -> int = fun buf rlw -> RLW.get_literal_words buf rlw [@@inline]
+  let get_running_len : buf -> 'a rd t -> int = fun buf rlw -> RLW.get_running_len buf rlw [@@inline]
+  let get_run_bit : buf -> 'a rd t -> int = fun buf rlw -> RLW.get_run_bit buf rlw [@@inline]
 end
 
 module PBuf : sig
@@ -306,20 +300,18 @@ module PBuf : sig
   val const : buf -> rd_only
   val get : 'a rd t -> int -> int
   val slice : 'a rd t -> int -> rlw
-  val unsafe_shift : 'a rd t -> int -> buf
+  val unsafe_shift : 'a rd t -> int -> 'a rd t
 end = struct
   type 'a rd = < rd: unit; .. > as 'a
-  type 'a t = buf
+  type 'a t = buf * int * int
 
   type rd_only = < rd: unit; > t
 
-  external const : buf -> rd_only = "%identity"
-  let get : 'a rd t -> int -> int = fun buf off -> get buf off [@@inline]
-  let slice : 'a rd t -> int -> rlw = fun buf off -> slice buf off [@@inline]
-  let unsafe_shift : 'a rd t -> int -> buf =
-    fun buf off ->
-      let len = Bigarray.Array1.dim buf in
-      Bigarray.Array1.sub buf off (len - off) [@@inline]
+  let const : buf -> rd_only = fun buf -> (buf, 0, Array.length buf)
+  let get : 'a rd t -> int -> int = fun (buf, s_off, s_len) off -> get buf (s_off + off) [@@inline]
+  let slice : 'a rd t -> int -> rlw = fun (buf, s_off, s_len) off -> slice buf (s_off + off) [@@inline]
+  let unsafe_shift : 'a rd t -> int -> 'a rd t =
+    fun (buf, s_off, s_len) shift -> (buf, s_off + shift, s_len - shift) [@@inline]
 end
 
 module Iterator = struct
@@ -338,11 +330,9 @@ module Iterator = struct
     ; mutable literal_word_offset : int
     ; mutable running_bit : int }
 
-  let zero =
-    let res = Bigarray.Array0.create Bigarray.Int Bigarray.c_layout in
-    RLW.set res 0 (* bzero *); res
+  let zero = 0
 
-  let empty = Bigarray.Array1.create Bigarray.Int Bigarray.c_layout 0
+  let empty = Array.create 1 0
 
   let default_uncompressed_rlw =
     { word= PRLW.const zero
@@ -365,10 +355,10 @@ module Iterator = struct
     if t.pointer < t.size
     then
       let prlw = PRLW.const @@ PBuf.slice t.buffer t.pointer in
-      let literal_words = PRLW.get_literal_words prlw in
+      let literal_words = PRLW.get_literal_words t.buffer prlw in
       t.rlw.word <- prlw ;
-      t.rlw.running_len <- PRLW.get_running_len prlw ;
-      t.rlw.running_bit <- PRLW.get_run_bit prlw ;
+      t.rlw.running_len <- PRLW.get_running_len t.buffer prlw ;
+      t.rlw.running_bit <- PRLW.get_run_bit t.buffer prlw ;
       t.rlw.literal_words <- literal_words ;
       t.rlw.literal_word_offset <- 0 ;
       t.pointer <- t.pointer + succ literal_words ;
@@ -382,6 +372,7 @@ module Iterator = struct
     res.literal_word_start <- literal_words res + res.rlw.literal_word_offset ;
     res
 
+  exception Break
   exception Return
 
   let discard_first_words t x =
@@ -432,11 +423,13 @@ module Iterator = struct
       index := !index + !pd ;
     done ; !index
 end
+*)
 
 exception Invalid_bit
 
 let set t i =
   let dist = ((i + 1) // _bits_in_word) - (t.bit_size // _bits_in_word) in
+
 
   if i < t.bit_size then raise Invalid_bit ;
 
@@ -446,9 +439,9 @@ let set t i =
   then begin
     if dist > 1 then add_empty_words t 0 (dist - 1) ;
     add_literal t (1 lsl (i % _bits_in_word))
-  end else if RLW.get_literal_words t.rlw == 0
+  end else if RLW.get_literal_words t.buffer t.rlw == 0
   then begin
-    RLW.set_running_len t.rlw (RLW.get_running_len t.rlw - 1) ;
+    RLW.set_running_len t.buffer t.rlw (RLW.get_running_len t.buffer t.rlw - 1) ;
     add_literal t (1 lsl (i % _bits_in_word))
   end else begin
     set t.buffer (t.buffer_size - 1) (get t.buffer (t.buffer_size - 1) lor (1 lsl (i mod _bits_in_word))) ;
@@ -458,7 +451,7 @@ let set t i =
     then begin
       t.buffer_size <- t.buffer_size - 1 ;
       set t.buffer t.buffer_size 0 ;
-      RLW.set_literal_words t.rlw (RLW.get_literal_words t.rlw - 1) ;
+      RLW.set_literal_words t.buffer t.rlw (RLW.get_literal_words t.buffer t.rlw - 1) ;
       add_empty_word t 1
     end
   end
@@ -466,8 +459,10 @@ let set t i =
 let add_empty_words t v n =
   if n == 0 then ()
   else
-    ( t.bit_size <- t.bit_size + (n * _bits_in_word) ; add_empty_words t v n )
+    ( t.bit_size <- t.bit_size + (n * _bits_in_word)
+    ; add_empty_words t v n )
 
+(*
 let xor a b o =
   let i = Iterator.make a in
   let j = Iterator.make b in
@@ -506,6 +501,7 @@ let xor a b o =
     else Iterator.discharge j o (lnot 0) 0 in
 
   o.bit_size <- max_word a.bit_size b.bit_size
+*)
 
 let make ~allocator =
   let buffer = allocator 32 in
